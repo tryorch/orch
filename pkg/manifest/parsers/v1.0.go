@@ -9,7 +9,7 @@ type V1Manifest struct {
 	Version    string                                 `yaml:"version"`
 	Inputs     map[string]manifestcore.Input          `yaml:"inputs,omitempty"`
 	Metadata   manifestcore.Metadata                  `yaml:"metadata,omitempty"`
-	Targets    map[string]manifestcore.TargetManifest `yaml:"targets"`
+	Runners    map[string]manifestcore.RunnerManifest `yaml:"runners"`
 	Components map[string]manifestcore.Component      `yaml:"components"`
 }
 
@@ -32,7 +32,7 @@ func (p *V1Parser) Parse(data []byte) (*manifestcore.Manifest, error) {
 		Version:    m.Version,
 		Inputs:     m.Inputs,
 		Metadata:   m.Metadata,
-		Targets:    m.Targets,
+		Runners:    m.Runners,
 		Components: components,
 	}, nil
 }

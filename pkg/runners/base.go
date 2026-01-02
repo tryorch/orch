@@ -1,23 +1,38 @@
-package targets
+package runners
 
 import (
 	"context"
 	"io"
+	"strings"
 	"time"
 )
 
-type TargetType string
+type RunnerType string
 
 const (
-	TargetTypeSSH   TargetType = "ssh"
-	TargetTypeAWS   TargetType = "aws"
-	TargetTypeLocal TargetType = "local"
+	RunnerTypeSSH   RunnerType = "ssh"
+	RunnerTypeLocal RunnerType = "local"
 )
 
 type Capabilities struct {
 	Exec     bool // Ability to execute shell-like commands
-	FileCopy bool // Ability to copy files to/from the target
-	Cloud    bool // Ability to interact with cloud services. Usually accompanied by a specific cloud config in the target.
+	FileCopy bool // Ability to copy files to/from the runner
+	API      bool // Ability to interact with cloud services. Usually accompanied by a specific cloud config in the runner.
+}
+
+func (c Capabilities) String() string {
+	var caps []string
+	if c.Exec {
+		caps = append(caps, "Exec")
+	}
+	if c.FileCopy {
+		caps = append(caps, "FileCopy")
+	}
+	if c.API {
+		caps = append(caps, "API")
+	}
+
+	return "[" + strings.Join(caps, ", ") + "]"
 }
 
 func (c Capabilities) SatisfiedBy(r Capabilities) bool {
@@ -52,8 +67,8 @@ type ExecResult struct {
 
 type FileCopyRequest struct {
 	Source      string // local or host-side path
-	Destination string // target-side path
-	ToTarget    bool   // true: copy to target, false: copy from target
+	Destination string // runner-side path
+	ToRunner    bool   // true: copy to runner, false: copy from runner
 	Recursive   bool   // copy directories recursively
 	Overwrite   bool   // overwrite existing files
 }
@@ -65,9 +80,9 @@ type FileCopyResult struct {
 	Error       error         // transport error, not semantic failure
 }
 
-type Target interface {
+type Runner interface {
 	Name() string
-	Type() TargetType
+	Type() RunnerType
 	ValidateAndInitialize() error
 	Capabilities() Capabilities
 	Exec(ctx context.Context, command ExecCommand) (*ExecResult, error)

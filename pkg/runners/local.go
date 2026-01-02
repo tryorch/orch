@@ -1,4 +1,4 @@
-package targets
+package runners
 
 import (
 	"context"
@@ -9,27 +9,28 @@ import (
 	"orch.io/pkg/utils"
 )
 
-type LocalTarget struct {
+type LocalRunner struct {
 	name string
+	env  map[string]string
 }
 
-func (t *LocalTarget) Name() string {
+func (t *LocalRunner) Name() string {
 	return t.name
 }
 
-func (t *LocalTarget) Type() TargetType {
-	return TargetTypeLocal
+func (t *LocalRunner) Type() RunnerType {
+	return RunnerTypeLocal
 }
 
-func (t *LocalTarget) Capabilities() Capabilities {
-	return Capabilities{Exec: true, FileCopy: true, Cloud: false}
+func (t *LocalRunner) Capabilities() Capabilities {
+	return Capabilities{Exec: true, FileCopy: true, API: true}
 }
 
-func (t *LocalTarget) ValidateAndInitialize() error {
+func (t *LocalRunner) ValidateAndInitialize() error {
 	return nil
 }
 
-func (t *LocalTarget) Exec(ctx context.Context, req ExecCommand) (*ExecResult, error) {
+func (t *LocalRunner) Exec(ctx context.Context, req ExecCommand) (*ExecResult, error) {
 	cmd := exec.Command(req.Command[0], req.Command[1:]...)
 	if req.Stdin != nil {
 		cmd.Stdin = req.Stdin
@@ -60,7 +61,7 @@ func (t *LocalTarget) Exec(ctx context.Context, req ExecCommand) (*ExecResult, e
 	}, nil
 }
 
-func (t *LocalTarget) CopyFile(ctx context.Context, req FileCopyRequest) (*FileCopyResult, error) {
+func (t *LocalRunner) CopyFile(ctx context.Context, req FileCopyRequest) (*FileCopyResult, error) {
 	var srcFS, dstFS utils.FSWithPath
 	srcFS = utils.FSWithPath{FS: &utils.LocalFS{}, Path: req.Source}
 	dstFS = utils.FSWithPath{FS: &utils.LocalFS{}, Path: req.Destination}
@@ -87,10 +88,10 @@ func (t *LocalTarget) CopyFile(ctx context.Context, req FileCopyRequest) (*FileC
 	}, err
 }
 
-func (t *LocalTarget) UsesNonAmbientCredentials() (bool, []string) {
+func (t *LocalRunner) UsesNonAmbientCredentials() (bool, []string) {
 	return false, nil
 }
 
-func (t *LocalTarget) Disconnect() error {
+func (t *LocalRunner) Disconnect() error {
 	return nil
 }

@@ -12,61 +12,65 @@ import (
 	"gopkg.in/yaml.v3"
 	"orch.io/pkg/events"
 	manifestcore "orch.io/pkg/manifest/core"
-	"orch.io/pkg/targets"
+	"orch.io/pkg/runners"
 	"orch.io/pkg/utils"
 )
 
 type DockerComposeAdapter struct{}
 type DockerComposeConfig struct {
-	WorkingDir string   `mapstructure:"working_dir"`
-	Flags      []string `mapstructure:"flags"`
-	// Optional custom runner, e.g., "docker compose" or "docker-compose"
-	Runner string `mapstructure:"runner"`
+	WorkDir string   `mapstructure:"workdir"`
+	Flags   []string `mapstructure:"flags"`
+	// Optional custom runner command, e.g., "docker compose" or "docker-compose"
+	Command string `mapstructure:"command"`
 
-	Services []ComposeServiceMetaData
+	Services map[string][]ComposeServiceMetaData
 }
 
-func (d *DockerComposeAdapter) RequiredCapabilities() targets.Capabilities {
-	return targets.Capabilities{Exec: true, FileCopy: true}
+func (d *DockerComposeAdapter) RequiredCapabilities() runners.Capabilities {
+	return runners.Capabilities{Exec: true, FileCopy: true}
 }
 
-func (d *DockerComposeAdapter) ValidateAndLoadConfig(c *manifestcore.Component) (ComponentConfig, []events.Event, error) {
+func (d *DockerComposeAdapter) SupportedSources() ComponentSourceSupport {
+	return ComponentSourceSupport{Files: true}
+}
+
+func (d *DockerComposeAdapter) ValidateAndLoadConfig(ctx context.Context, c *manifestcore.Component) (ComponentConfig, []events.Event, error) {
 	var cfg DockerComposeConfig
 	var warnings []events.Event
 
 	if err := mapstructure.Decode(c.Config, &cfg); err != nil {
 		return nil, warnings, err
 	}
-	if c.Source.Path == "" {
-		return nil, warnings, fmt.Errorf("docker-compose component must have a source path")
-	}
 
-	services, err := loadComposeFileAndExtractServices(c.Source.Path)
-	if err != nil {
-		return nil, warnings, fmt.Errorf("failed to load compose file: %w", err)
-	}
-
-	for _, service := range services {
-		if service.HasFixedPorts {
-			warnings = append(warnings, events.Event{
-				Type: events.EventWarning,
-				Message: fmt.Sprintf("Compose service %s has fixed port mappings."+
-					"This may lead to port conflicts when multiple instances are deployed.", service.Name),
-				Hint: "Consider using dynamic port mappings or environment variables to avoid conflicts.\n" +
-					"Dynamic port mappings can be specified by omitting the host port (e.g., '8080' instead of '80:8080').\n" +
-					"See more info at https://orch.io/docs/guides/docker-compose#handling-port-conflicts",
-				Adapter:   c.Type,
-				Target:    c.Target,
-				Component: c.Name,
-			})
+	cfg.Services = make(map[string][]ComposeServiceMetaData)
+	for _, file := range c.Source.Files {
+		services, err := loadComposeFileAndExtractServices(file)
+		if err != nil {
+			return nil, warnings, fmt.Errorf("failed to load compose file: %w", err)
 		}
-	}
 
-	cfg.Services = services
+		for _, service := range services {
+			if service.HasFixedPorts {
+				warnings = append(warnings, events.Event{
+					Type: events.EventWarning,
+					Message: fmt.Sprintf("Compose service %q has fixed port mappings."+
+						"This may lead to port conflicts when multiple instances are deployed.", service.Name),
+					Hint: "Consider using dynamic port mappings or environment variables to avoid conflicts.\n" +
+						"Dynamic port mappings can be specified by omitting the host port (e.g., '8080' instead of '80:8080').\n" +
+						"See more info at https://orch.io/docs/guides/docker-compose#handling-port-conflicts",
+					Adapter:   c.Type,
+					Runner:    c.Runner,
+					Component: c.Name,
+				})
+			}
+		}
+
+		cfg.Services[file] = services
+	}
 	return &cfg, warnings, nil
 }
 
-func (d *DockerComposeAdapter) Apply(ctx context.Context, c *manifestcore.Component, t targets.Target) error {
+func (d *DockerComposeAdapter) Apply(ctx context.Context, c *manifestcore.Component, t runners.Runner) error {
 	cfg, ok := c.LoadedConfig.(*DockerComposeConfig)
 	if !ok {
 		return fmt.Errorf("invalid config type for DockerComposeAdapter")
@@ -74,54 +78,89 @@ func (d *DockerComposeAdapter) Apply(ctx context.Context, c *manifestcore.Compon
 
 	aCtx, ok := AdapterContextFromContext(ctx)
 	if !ok {
-		return fmt.Errorf("failed to get sandbox ID from context")
+		return fmt.Errorf("failed to get env ID from context")
 	}
 
-	workingDir := path.Join(cfg.WorkingDir, "boxes", aCtx.envID, c.Name)
-	composeFilePath := path.Join(workingDir, "docker-compose.yaml")
+	workDir := path.Join(cfg.WorkDir, "orch", aCtx.envID, c.Name)
 
-	copyRes, err := t.CopyFile(ctx, targets.FileCopyRequest{
-		Source:      c.Source.Path,
-		Destination: composeFilePath,
-		ToTarget:    true,
-		Overwrite:   true,
-		Recursive:   false,
-	})
+	// Copy WithFiles to workDir
+	for name, file := range c.WithFiles {
+		copyRes, err := t.CopyFile(ctx, runners.FileCopyRequest{
+			Source:      file,
+			Destination: path.Join(workDir, name),
+			ToRunner:    true,
+			Overwrite:   true,
+			Recursive:   false,
+		})
 
-	if err != nil {
-		return fmt.Errorf("failed to copy docker-compose file to target: %w", err)
+		if err != nil {
+			return fmt.Errorf("failed to copy with-file %q to runner: %w", name, err)
+		}
+		if copyRes.Error != nil {
+			return fmt.Errorf("error during with-file %q copy: %w", name, copyRes.Error)
+		}
+
+		aCtx.emitter.Emit(events.Event{
+			Type:      events.EventInfo,
+			Message:   fmt.Sprintf("Copied with-file %q to %q", name, workDir),
+			Adapter:   c.Type,
+			Runner:    c.Runner,
+			Component: c.Name,
+			Duration:  copyRes.Duration,
+		})
 	}
-	if copyRes.Error != nil {
-		return fmt.Errorf("error during file copy: %w", copyRes.Error)
+
+	// Copy compose files to workDir
+	composeFiles := make([]string, 0, len(c.Source.Files))
+	for _, file := range c.Source.Files {
+		composeFiles = append(composeFiles, path.Join(workDir, path.Base(file)))
+		copyRes, err := t.CopyFile(ctx, runners.FileCopyRequest{
+			Source:      file,
+			Destination: path.Join(workDir, path.Base(file)),
+			ToRunner:    true,
+			Overwrite:   true,
+			Recursive:   false,
+		})
+
+		if err != nil {
+			return fmt.Errorf("failed to copy compose file %q to runner: %w", file, err)
+		}
+		if copyRes.Error != nil {
+			return fmt.Errorf("error during compose file %q copy: %w", file, copyRes.Error)
+		}
+
+		aCtx.emitter.Emit(events.Event{
+			Type:      events.EventInfo,
+			Message:   fmt.Sprintf("Copied compose file %q to %q", file, workDir),
+			Adapter:   c.Type,
+			Runner:    c.Runner,
+			Component: c.Name,
+			Duration:  copyRes.Duration,
+		})
 	}
 
-	aCtx.emitter.Emit(events.Event{
-		Type:      events.EventInfo,
-		Message:   fmt.Sprintf("Copied compose file to %s", composeFilePath),
-		Adapter:   c.Type,
-		Target:    c.Target,
-		Component: c.Name,
-		Duration:  copyRes.Duration,
-	})
-
-	runner := []string{"docker", "compose"}
-	if cfg.Runner != "" {
-		runner = strings.Split(cfg.Runner, " ")
+	execCommand := []string{"docker", "compose"}
+	if cfg.Command != "" {
+		execCommand = strings.Split(cfg.Command, " ")
 	}
 
 	if len(cfg.Flags) > 0 {
-		runner = append(runner, cfg.Flags...)
+		execCommand = append(execCommand, cfg.Flags...)
 	}
 
-	cmd := append(runner, "-f", composeFilePath, "-p", aCtx.envID, "up", "-d")
+	for _, cfp := range composeFiles {
+		execCommand = append(execCommand, "-f", cfp)
+	}
 
-	execRes, err := t.Exec(ctx, targets.ExecCommand{
-		WorkingDir: workingDir,
+	cmd := append(execCommand, "-p", composeProjectName(aCtx.envID, c.Name), "up", "-d")
+
+	execRes, err := t.Exec(ctx, runners.ExecCommand{
+		WorkingDir: workDir,
 		Command:    cmd,
-		Env:        buildOrchManagedComposeEnv(c.Env, aCtx.envID, path.Dir(workingDir)),
+		Env:        buildOrchManagedComposeEnv(c.Env, aCtx.envID, path.Dir(workDir), c.Name),
 		Timeout:    0,
-		Stderr:     utils.NewPrefixWriter(os.Stderr, fmt.Sprintf("-→] \033[34m[%s > %s]\033[0m ", c.Target, c.Name)),
-		Stdout:     utils.NewPrefixWriter(os.Stdout, fmt.Sprintf("-→] \033[34m[%s > %s]\033[0m ", c.Target, c.Name)),
+		Stderr:     utils.NewPrefixWriter(os.Stderr, fmt.Sprintf("-→] \033[34m[%s > %s]\033[0m ", c.Runner, c.Name)),
+		Stdout:     utils.NewPrefixWriter(os.Stdout, fmt.Sprintf("-→] \033[34m[%s > %s]\033[0m ", c.Runner, c.Name)),
 	})
 
 	if err != nil {
@@ -135,7 +174,7 @@ func (d *DockerComposeAdapter) Apply(ctx context.Context, c *manifestcore.Compon
 	return nil
 }
 
-func (d *DockerComposeAdapter) Destroy(ctx context.Context, c *manifestcore.Component, t targets.Target) error {
+func (d *DockerComposeAdapter) Destroy(ctx context.Context, c *manifestcore.Component, t runners.Runner) error {
 	cmd := exec.Command("docker-compose", "-f", c.Source.Path, "down")
 	fmt.Printf("Running docker-compose down for %s...\n", c.Source.Path)
 	return cmd.Run()
@@ -145,15 +184,14 @@ func buildOrchManagedComposeEnv(
 	base map[string]string,
 	envID string,
 	workDir string,
+	componentName string,
 ) map[string]string {
-
 	if base == nil {
 		base = make(map[string]string)
 	}
 
-	base["COMPOSE_PROJECT_NAME"] = fmt.Sprintf("orch_%s", envID)
-	base["COMPOSE_FILE"] = path.Join(workDir, "docker-compose.yaml")
-	base["ORCH_WORKING_DIR"] = workDir
+	base["COMPOSE_PROJECT_NAME"] = composeProjectName(envID, componentName)
+	base["ORCH_COMPOSE_WORKING_DIR"] = workDir
 	base["ORCH_ENV_ID"] = envID
 	return base
 }
@@ -162,8 +200,7 @@ func init() {
 	Register("docker-compose", &DockerComposeAdapter{})
 }
 
-// Compose Ports Utilities
-
+// ComposeFile Ports Utilities
 type ComposeFile struct {
 	Services map[string]struct {
 		Ports []string `yaml:"ports"`
@@ -211,4 +248,8 @@ func loadComposeFileAndExtractServices(filePath string) ([]ComposeServiceMetaDat
 	}
 
 	return services, nil
+}
+
+func composeProjectName(envID, componentName string) string {
+	return fmt.Sprintf("orch_%s_%s", envID, componentName)
 }

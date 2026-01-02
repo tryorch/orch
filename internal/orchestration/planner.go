@@ -11,15 +11,15 @@ import (
 // and returns the planned operations in order.
 func TopologicallySortComponents(
 	elements []manifestcore.Component,
-) ([]manifestcore.Component, error) {
+) ([]*manifestcore.Component, error) {
 
-	nodes := make(map[string]manifestcore.Component, len(elements))
+	nodes := make(map[string]*manifestcore.Component, len(elements))
 	for _, e := range elements {
 		if _, exists := nodes[e.Name]; exists {
 			// very unlikely due to earlier validation, but just in case
 			return nil, fmt.Errorf("duplicate executable key: %s", e.Name)
 		}
-		nodes[e.Name] = e
+		nodes[e.Name] = &e
 	}
 
 	// Validate dependencies exist
@@ -40,7 +40,7 @@ func TopologicallySortComponents(
 	stack := make([]string, 0)
 	indexInStack := make(map[string]int)
 
-	result := make([]manifestcore.Component, 0, len(elements))
+	result := make([]*manifestcore.Component, 0, len(elements))
 
 	var visit func(string) error
 	visit = func(key string) error {

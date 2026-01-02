@@ -7,23 +7,23 @@ import (
 	"orch.io/internal/adapters"
 	"orch.io/pkg/logging"
 	manifestcore "orch.io/pkg/manifest/core"
-	"orch.io/pkg/targets"
+	"orch.io/pkg/runners"
 )
 
 func RunDown(m *manifestcore.Manifest, logger logging.Logger) error {
 	fmt.Printf("Tearing down sandbox: %s\n", m.Metadata.ID)
 
-	allTargets, err := targets.FromManifestTargetsMap(m.Targets)
+	allRunners, err := runners.FromManifestRunnersMap(m.Runners)
 	if err != nil {
-		return fmt.Errorf("failed to create targets from manifest: %w", err)
+		return fmt.Errorf("failed to create runners from manifest: %w", err)
 	}
 
 	for i := range m.Components {
 		c := &m.Components[i]
-		t, ok := allTargets[c.Target]
+		t, ok := allRunners[c.Runner]
 		if !ok {
-			return fmt.Errorf("component \"%s\" references unknown target \"%s\"",
-				c.Name, c.Target)
+			return fmt.Errorf("component \"%s\" references unknown runner \"%s\"",
+				c.Name, c.Runner)
 		}
 		fmt.Printf("→ Destroying component: %s\n", c.Name)
 		adapter, err := adapters.Get(c.Type)
@@ -31,7 +31,7 @@ func RunDown(m *manifestcore.Manifest, logger logging.Logger) error {
 			return err
 		}
 
-		cfg, _, err := adapter.ValidateAndLoadConfig(c)
+		cfg, _, err := adapter.ValidateAndLoadConfig(context.Background(), c)
 		if err != nil {
 			return fmt.Errorf("component \"%s\" config validation failed: %w", c.Name, err)
 		}

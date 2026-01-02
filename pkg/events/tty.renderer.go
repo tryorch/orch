@@ -27,7 +27,7 @@ func (r *TTYRenderer) Render(e Event) {
 		icon = "[⚠]"
 	}
 
-	line := fmt.Sprintf("%s \033[33m%s\033[0m(%s)  \033[35m%-6s\033[0m %s", icon, e.Component, e.Adapter, e.Target, e.Message)
+	line := fmt.Sprintf("%s \033[33m%s\033[0m(\033[1m%s\033[0m)  \033[35m%-6s\033[0m %s", icon, e.Component, e.Adapter, e.Runner, e.Message)
 	if e.Type == EventSuccess && e.Duration > 0 {
 		line += fmt.Sprintf(" (%s)", e.Duration.Round(time.Second))
 	}

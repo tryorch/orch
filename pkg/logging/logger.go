@@ -8,7 +8,7 @@ type Field struct {
 }
 
 // DebugLogger is intentionally limited.
-// Adapters and targets should NOT log at INFO or higher.
+// Adapters and runners should NOT log at INFO or higher.
 type DebugLogger interface {
 	Debug(msg string, fields ...Field)
 	Trace(msg string, fields ...Field)

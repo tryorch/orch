@@ -4,7 +4,7 @@ components:
     description: string              # Optional human-readable description
 
     provider: string                 # Optional (e.g. aws, gcp, azure, onprem)
-    target: string                   # Where to deploy/run (e.g. local, remote, ecs, kubernetes, aws)
+    runner: string                   # Where to deploy/run (e.g. local, remote, ecs, kubernetes, aws)
     strategy: string                 # How to deploy/run (e.g. direct, daemonized, redeploy)
 
     depends_on: [string, ...]        # Optional dependency list of other component names

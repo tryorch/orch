@@ -9,9 +9,15 @@ import (
 	"orch.io/pkg/events"
 	"orch.io/pkg/logging"
 	manifestcore "orch.io/pkg/manifest/core"
-	"orch.io/pkg/targets"
+	"orch.io/pkg/runners"
 	"orch.io/pkg/varresolvers"
 )
+
+type job struct {
+	c *manifestcore.Component
+	r *runners.Runner
+	a *adapters.Adapter
+}
 
 func RunUp(envID string, m *manifestcore.Manifest, logger logging.Logger, inputs map[string]string) error {
 	componentResolver := varresolvers.NewComponentResolver()
@@ -26,16 +32,16 @@ func RunUp(envID string, m *manifestcore.Manifest, logger logging.Logger, inputs
 	emitter := events.NewRendererEmitter()
 	ctx := adapters.NewAdapterContext(context.Background(), envID, logger.AsDebugLogger(), emitter)
 
-	for key, value := range m.Targets {
+	for key, value := range m.Runners {
 		cfg, err := varresolvers.DeepInterpolate(ctx, value.Config, resolvers)
 		if err != nil {
-			return fmt.Errorf("failed to interpolate target \"%s\" config: %w", key, err)
+			return fmt.Errorf("failed to interpolate runner \"%s\" config: %w", key, err)
 		}
 		value.Config = cfg
-		m.Targets[key] = value
+		m.Runners[key] = value
 	}
 
-	allTargets, err := targets.FromManifestTargetsMap(m.Targets)
+	allRunners, err := runners.FromManifestRunnersMap(m.Runners)
 	if err != nil {
 		return err
 	}
@@ -45,23 +51,28 @@ func RunUp(envID string, m *manifestcore.Manifest, logger logging.Logger, inputs
 		return fmt.Errorf("failed to establish logical apply order: %w", err)
 	}
 
-	for i := range componentsInOrder {
-		c := &m.Components[i]
-		t, ok := allTargets[c.Target]
+	// Registry of all jobs to be executed, with already validated configs, runners, and adapters
+	var jobs []job
+	for _, c := range componentsInOrder {
+		t, ok := allRunners[c.Runner]
 		if !ok {
-			return fmt.Errorf("component \"%s\" references an unknown target \"%s\"",
-				c.Name, c.Target)
+			return fmt.Errorf("component \"%s\" references an unknown runner \"%s\"",
+				c.Name, c.Runner)
+		}
+
+		if _, err := c.Source.Validate(); err != nil {
+			return fmt.Errorf("component \"%s\" has an invalid source configuration", c.Name)
 		}
 
 		if yes, list := t.UsesNonAmbientCredentials(); yes {
 			emitter.Emit(events.Event{
 				Type: events.EventWarning,
 				Message: fmt.Sprintf(
-					"Target uses non-ambient credentials (%v). This component cannot be reliably torn down by Orch.",
+					"Runner uses non-ambient credentials (%v). This component cannot be reliably torn down by Orch.",
 					strings.Join(list, ", "),
 				),
-				Hint:      "Use ambient authentication for the target to enable safe teardown of this component. Learn more at https://orch.io/docs/guides/authentication",
-				Target:    t.Name(),
+				Hint:      "Use ambient authentication for the runner to enable safe teardown of this component. Learn more at https://orch.io/docs/guides/authentication",
+				Runner:    t.Name(),
 				Component: c.Name,
 				Adapter:   c.Type,
 			})
@@ -72,16 +83,21 @@ func RunUp(envID string, m *manifestcore.Manifest, logger logging.Logger, inputs
 			return err
 		}
 
+		if !adapter.SupportedSources().SatisfiedBy(c.Source) {
+			return fmt.Errorf("component \"%s\" source type \"%s\" is not supported by adapter \"%s\". Supported source types are: %s",
+				c.Name, c.Source.Type(), c.Type, adapter.SupportedSources().String())
+		}
+
 		if !adapter.RequiredCapabilities().SatisfiedBy(t.Capabilities()) {
-			return fmt.Errorf("component \"%s\" requires capabilities %v which are not satisfied by target \"%s\" capabilities %v",
+			return fmt.Errorf("component \"%s\" requires capabilities %v which are not satisfied by runner \"%s\" capabilities %v",
 				c.Name, adapter.RequiredCapabilities(), t.Name(), t.Capabilities())
 		}
 
 		// Interpolate variables in component properties
-		for key, value := range c.Config {
-			resolvedValue, err := varresolvers.InterpolateString(ctx, value, resolvers)
+		resolvedConfig, err := varresolvers.DeepInterpolate(ctx, c.Config, resolvers)
+		for key, value := range resolvedConfig {
 			if err == nil {
-				c.Config[key] = resolvedValue
+				c.Config[key] = value
 			}
 		}
 
@@ -93,7 +109,7 @@ func RunUp(envID string, m *manifestcore.Manifest, logger logging.Logger, inputs
 			}
 		}
 
-		cfg, warnings, err := adapter.ValidateAndLoadConfig(c)
+		cfg, warnings, err := adapter.ValidateAndLoadConfig(ctx, c)
 		if err != nil {
 			return fmt.Errorf("component \"%s\" config validation failed: %w", c.Name, err)
 		}
@@ -104,36 +120,50 @@ func RunUp(envID string, m *manifestcore.Manifest, logger logging.Logger, inputs
 
 		c.LoadedConfig = cfg
 
+		jobs = append(jobs, job{
+			c: c,
+			r: &t,
+			a: &adapter,
+		})
+	}
+
+	// Execute all jobs
+	for _, j := range jobs {
+		component := j.c
+		adapter := *j.a
+		runner := *j.r
+
 		emitter.Emit(events.Event{
 			Type:      events.EventStart,
 			Message:   fmt.Sprintf("starting apply for component"),
-			Adapter:   c.Type,
-			Target:    c.Target,
-			Component: c.Name,
+			Adapter:   component.Type,
+			Runner:    component.Runner,
+			Component: component.Name,
 		})
-		if err := adapter.Apply(ctx, c, t); err != nil {
+
+		if err := adapter.Apply(ctx, component, runner); err != nil {
 			emitter.Emit(events.Event{
 				Type:      events.EventFailure,
 				Message:   fmt.Sprintf("failed to apply component"),
-				Adapter:   c.Type,
-				Target:    c.Target,
-				Component: c.Name,
+				Adapter:   component.Type,
+				Runner:    component.Runner,
+				Component: component.Name,
 				Err:       err,
 			})
 
-			return fmt.Errorf("component \"%s\" failed to apply", c.Name)
+			return fmt.Errorf("component \"%s\" failed to apply", component.Name)
 		}
 
-		componentResolver.RegisterComponentOutput(c.Name, "test", "value") //todo: fix
+		componentResolver.RegisterComponentOutput(component.Name, "test", "value") //todo: fix
 	}
 
-	// Disconnect all targets
-	for _, t := range allTargets {
+	// Disconnect all runners
+	for _, t := range allRunners {
 		if err := t.Disconnect(); err != nil {
 			emitter.Emit(events.Event{
 				Type:    events.EventWarning,
-				Message: fmt.Sprintf("failed to disconnect from target \"%s\": %v", t.Name(), err),
-				Target:  t.Name(),
+				Message: fmt.Sprintf("failed to disconnect from runner \"%s\": %v", t.Name(), err),
+				Runner:  t.Name(),
 			})
 		}
 	}

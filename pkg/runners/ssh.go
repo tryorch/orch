@@ -1,4 +1,4 @@
-package targets
+package runners
 
 import (
 	"context"
@@ -12,7 +12,7 @@ import (
 	"orch.io/pkg/utils"
 )
 
-type SSHTargetConfig struct {
+type SSHRunnerConfig struct {
 	Host string `yaml:"host"`
 	Port int    `yaml:"port"`
 	User string `yaml:"user"`
@@ -23,26 +23,27 @@ type SSHTargetConfig struct {
 	} `yaml:"auth"`
 }
 
-type SSHTarget struct {
+type SSHRunner struct {
 	name   string
-	config SSHTargetConfig
+	config SSHRunnerConfig
+	env    map[string]string
 
 	client *ssh.Client // managed SSH client
 }
 
-func (t *SSHTarget) Name() string {
+func (t *SSHRunner) Name() string {
 	return t.name
 }
 
-func (t *SSHTarget) Type() TargetType {
-	return TargetTypeSSH
+func (t *SSHRunner) Type() RunnerType {
+	return RunnerTypeSSH
 }
 
-func (t *SSHTarget) Capabilities() Capabilities {
+func (t *SSHRunner) Capabilities() Capabilities {
 	return Capabilities{Exec: true, FileCopy: true}
 }
 
-func (t *SSHTarget) ValidateAndInitialize() error {
+func (t *SSHRunner) ValidateAndInitialize() error {
 	if t.client != nil {
 		return nil // already connected
 	}
@@ -97,9 +98,9 @@ func (t *SSHTarget) ValidateAndInitialize() error {
 	return nil
 }
 
-func (t *SSHTarget) Exec(ctx context.Context, req ExecCommand) (*ExecResult, error) {
+func (t *SSHRunner) Exec(ctx context.Context, req ExecCommand) (*ExecResult, error) {
 	if !t.Capabilities().Exec {
-		return nil, errors.New("exec not supported. target does not support Exec")
+		return nil, errors.New("exec not supported. runner does not support Exec")
 	}
 
 	session, err := t.client.NewSession()
@@ -149,7 +150,7 @@ func (t *SSHTarget) Exec(ctx context.Context, req ExecCommand) (*ExecResult, err
 	}, nil
 }
 
-func (t *SSHTarget) CopyFile(ctx context.Context, req FileCopyRequest) (*FileCopyResult, error) {
+func (t *SSHRunner) CopyFile(ctx context.Context, req FileCopyRequest) (*FileCopyResult, error) {
 	if !t.Capabilities().FileCopy {
 		return nil, errors.New("FileCopy not supported")
 	}
@@ -166,7 +167,7 @@ func (t *SSHTarget) CopyFile(ctx context.Context, req FileCopyRequest) (*FileCop
 	}(sftpClient)
 
 	var srcFS, dstFS utils.FSWithPath
-	if req.ToTarget {
+	if req.ToRunner {
 		srcFS = utils.FSWithPath{FS: &utils.LocalFS{}, Path: req.Source}
 		dstFS = utils.FSWithPath{FS: &utils.SFTPFS{SftpClient: sftpClient}, Path: req.Destination}
 	} else {
@@ -196,7 +197,7 @@ func (t *SSHTarget) CopyFile(ctx context.Context, req FileCopyRequest) (*FileCop
 	}, err
 }
 
-func (t *SSHTarget) UsesNonAmbientCredentials() (bool, []string) {
+func (t *SSHRunner) UsesNonAmbientCredentials() (bool, []string) {
 	var creds []string
 	if t.config.Auth.Method == "password" {
 		creds = append(creds, "SSH password")
@@ -206,7 +207,7 @@ func (t *SSHTarget) UsesNonAmbientCredentials() (bool, []string) {
 	return len(creds) > 0, creds
 }
 
-func (t *SSHTarget) Disconnect() error {
+func (t *SSHRunner) Disconnect() error {
 	if t.client != nil {
 		return t.client.Close()
 	}
