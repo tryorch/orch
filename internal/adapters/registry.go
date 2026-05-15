@@ -8,6 +8,7 @@ import (
 	"orch.io/pkg/events"
 	manifestcore "orch.io/pkg/manifest/core"
 	"orch.io/pkg/runners"
+	"orch.io/pkg/state"
 )
 
 type ComponentSourceSupport struct {
@@ -55,6 +56,8 @@ type ComponentApplyOutput map[string]string
 type Adapter interface {
 	Apply(ctx context.Context, c *manifestcore.Component, r runners.Runner) (ComponentApplyOutput, error)
 	Destroy(ctx context.Context, c *manifestcore.Component, r runners.Runner) error
+	BuildState(ctx context.Context, c *manifestcore.Component, r runners.Runner, outputs ComponentApplyOutput) (state.ComponentStateData, error)
+	DestroyFromState(ctx context.Context, c state.ComponentState, r runners.Runner) error
 	RequiredCapabilities() runners.Capabilities
 	SupportedSources() ComponentSourceSupport
 

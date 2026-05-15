@@ -8,9 +8,9 @@ import (
 )
 
 func FromManifest(name string, mr manifestcore.RunnerManifest) (Runner, error) {
-	env, _, err := RetrieveProviderConfigForExecutionContext(mr.Providers)
+	env, _, err := RetrieveProviderConfigForRunner(mr.Providers)
 	if err != nil {
-		return nil, fmt.Errorf("failed to retrieve provider config for execution context \"%s\": %w", name, err)
+		return nil, fmt.Errorf("failed to retrieve provider config for runner %q: %w", name, err)
 	}
 	switch mr.Type {
 	case "local":

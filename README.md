@@ -3,7 +3,7 @@ orch.io
 03.01.2025 (00:16)
 
 # TODO
-- Figure out the working directory madness (for exec-based adapters)
+- Maybe unifying the Source support in component. Think about it. Right now compose only support files, but terraform, embed and path
 - Figure out Identity requirements and check for adapters
   - Verify Runner, Adapter Identity Compatibility
 - Implementate CloudFormation adapter 

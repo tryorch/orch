@@ -111,6 +111,7 @@ type Component struct {
 	Env       map[string]string      `yaml:"env,omitempty"`
 	Outputs   []string               `yaml:"outputs,omitempty"`
 	Runner    string                 `yaml:"runner,omitempty"`
+	WorkDir   string                 `yaml:"workdir,omitempty"`
 
 	// LoadedConfig holds the validated and loaded configuration specific to the component's adapter.
 	LoadedConfig interface{} `yaml:"-"`

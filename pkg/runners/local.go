@@ -3,6 +3,7 @@ package runners
 import (
 	"context"
 	"errors"
+	"os"
 	"os/exec"
 	"time"
 
@@ -23,7 +24,7 @@ func (t *LocalRunner) Type() RunnerType {
 }
 
 func (t *LocalRunner) Capabilities() Capabilities {
-	return Capabilities{Exec: true, FileCopy: true, API: true}
+	return Capabilities{Exec: true, FileCopy: true}
 }
 
 func (t *LocalRunner) ValidateAndInitialize() error {
@@ -41,6 +42,9 @@ func (t *LocalRunner) Exec(ctx context.Context, req ExecCommand) (*ExecResult, e
 	if req.Stderr != nil {
 		cmd.Stderr = req.Stderr
 	}
+
+	cmd.Env = append(os.Environ(), utils.MapToEnvSlice(t.env, req.Env)...)
+	cmd.Dir = req.WorkingDir
 
 	start := time.Now()
 	err := cmd.Run()

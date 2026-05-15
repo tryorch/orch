@@ -1,0 +1,24 @@
+version: orch.io/1.0
+
+metadata:
+  id: docker-compose-smoke
+  description: Local Docker Compose smoke test
+  owner:
+    name: Orch
+    email: orch@example.com
+
+runners:
+  local:
+    type: local
+    config: {}
+
+components:
+  web:
+    type: docker-compose
+    runner: local
+    workdir: ./tests/docker-compose-smoke/.workdir
+    source:
+      files:
+        - ./tests/docker-compose-smoke/docker-compose.yml
+    config:
+      command: docker compose

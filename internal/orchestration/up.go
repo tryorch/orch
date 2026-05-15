@@ -10,6 +10,7 @@ import (
 	"orch.io/pkg/logging"
 	manifestcore "orch.io/pkg/manifest/core"
 	"orch.io/pkg/runners"
+	"orch.io/pkg/state"
 	"orch.io/pkg/varresolvers"
 )
 
@@ -36,6 +37,11 @@ func RunUp(envID string, m *manifestcore.Manifest, logger logging.Logger, inputs
 
 	emitter := events.NewRendererEmitter()
 	ctx := adapters.NewAdapterContext(context.Background(), envID, logger.AsDebugLogger(), emitter)
+	stateManager := state.NewStateManager(envID)
+	currentState, err := stateManager.LoadOrNew(m.Metadata.ID)
+	if err != nil {
+		return fmt.Errorf("failed to initialize state: %w", err)
+	}
 
 	for key, value := range m.Runners {
 		cfg, err := varresolvers.DeepInterpolate(ctx, value.Config, resolvers)
@@ -160,6 +166,17 @@ func RunUp(envID string, m *manifestcore.Manifest, logger logging.Logger, inputs
 			return fmt.Errorf("component \"%s\" failed to apply", component.Name)
 		}
 		componentResolver.RegisterComponentOutput(component.Name, component.Outputs, outputs)
+
+		componentStateData, err := adapter.BuildState(ctx, component, runner, outputs)
+		if err != nil {
+			return fmt.Errorf("component %q failed to build state: %w", component.Name, err)
+		}
+
+		componentState := state.NewComponentState(component, string(runner.Type()), outputs, componentStateData)
+		currentState.UpsertComponent(componentState)
+		if err := stateManager.Save(currentState); err != nil {
+			return fmt.Errorf("failed to save state for component %q: %w", component.Name, err)
+		}
 	}
 
 	// Disconnect all runners

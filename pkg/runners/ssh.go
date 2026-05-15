@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"strings"
 	"time"
 
 	"github.com/pkg/sftp"
@@ -138,6 +139,19 @@ func (t *SSHRunner) Exec(ctx context.Context, req ExecCommand) (*ExecResult, err
 			return nil, fmt.Errorf("failed to write command to stdout: %w", err)
 		}
 	}
+	
+	env := utils.MapToEnvSlice(t.env, req.Env)
+	for _, e := range env {
+		eParts := strings.Split(e, "=")
+		if len(eParts) != 2 {
+			continue
+		}
+		err := session.Setenv(eParts[0], eParts[1])
+		if err != nil {
+			return nil, err
+		}
+	}
+
 	err = session.Run(cmd)
 	duration := time.Since(start)
 

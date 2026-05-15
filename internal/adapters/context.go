@@ -16,8 +16,16 @@ type AdapterContext struct {
 	emitter events.Emitter
 }
 
-func (a AdapterContext) GetComponentWorkDir(c string) string {
+func (a AdapterContext) GetComponentWorkDirInOrchLocalWorkDir(c string) string {
 	return path.Join(".orch", a.envID, c)
+}
+
+func (a AdapterContext) EnvID() string {
+	return a.envID
+}
+
+func (a AdapterContext) BuildRunnerWorkDir(baseWorkDir, componentName string) string {
+	return path.Join(baseWorkDir, "orch", a.envID, componentName)
 }
 
 func NewAdapterContext(ctx context.Context, id string, logger logging.DebugLogger, emitter events.Emitter) context.Context {

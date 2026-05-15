@@ -1,0 +1,28 @@
+version: orch.io/1.0
+
+metadata:
+  id: terraform-smoke
+  description: Local Terraform smoke test
+  owner:
+    name: Orch
+    email: orch@example.com
+
+runners:
+  local:
+    type: local
+    config: {}
+
+components:
+  tf:
+    type: terraform
+    runner: local
+    workdir: ./tests/terraform-smoke/.workdir
+    source:
+      embedded: |
+        terraform {
+          required_version = ">= 1.4.0"
+        }
+
+        resource "terraform_data" "smoke" {
+          input = "orch terraform smoke"
+        }

@@ -1,0 +1,17 @@
+AWSTemplateFormatVersion: "2010-09-09"
+Description: Orch CloudFormation smoke test stack.
+
+Resources:
+  SmokeParameter:
+    Type: AWS::SSM::Parameter
+    Properties:
+      Name: !Sub "/orch/smoke/${AWS::StackName}"
+      Type: String
+      Value: "orch cloudformation smoke"
+      Tier: Standard
+      Tags:
+        OrchSmoke: cloudformation
+
+Outputs:
+  ParameterName:
+    Value: !Ref SmokeParameter

@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"os"
-	"os/exec"
 	"path"
 	"strings"
 
@@ -13,17 +12,26 @@ import (
 	"orch.io/pkg/events"
 	manifestcore "orch.io/pkg/manifest/core"
 	"orch.io/pkg/runners"
+	"orch.io/pkg/state"
 	"orch.io/pkg/utils"
 )
 
 type DockerComposeAdapter struct{}
 type DockerComposeConfig struct {
-	WorkDir string   `mapstructure:"workdir"`
-	Flags   []string `mapstructure:"flags"`
+	Flags []string `mapstructure:"flags"`
 	// Optional custom runner command, e.g., "docker compose" or "docker-compose"
 	Command string `mapstructure:"command"`
 
 	Services map[string][]ComposeServiceMetaData
+	Files    []string
+}
+
+type DockerComposeState struct {
+	Command      []string          `mapstructure:"command" json:"command"`
+	ComposeFiles []string          `mapstructure:"compose_files" json:"compose_files"`
+	Env          map[string]string `mapstructure:"env" json:"env"`
+	ProjectName  string            `mapstructure:"project_name" json:"project_name"`
+	WorkDir      string            `mapstructure:"workdir" json:"workdir"`
 }
 
 func (d *DockerComposeAdapter) RequiredCapabilities() runners.Capabilities {
@@ -81,7 +89,7 @@ func (d *DockerComposeAdapter) Apply(ctx context.Context, c *manifestcore.Compon
 		return nil, fmt.Errorf("failed to get env ID from context")
 	}
 
-	workDir := path.Join(cfg.WorkDir, "orch", aCtx.envID, c.Name)
+	workDir := aCtx.BuildRunnerWorkDir(c.WorkDir, c.Name)
 
 	// Copy WithFiles to workDir
 	for name, file := range c.WithFiles {
@@ -113,7 +121,7 @@ func (d *DockerComposeAdapter) Apply(ctx context.Context, c *manifestcore.Compon
 	// Copy compose files to workDir
 	composeFiles := make([]string, 0, len(c.Source.Files))
 	for _, file := range c.Source.Files {
-		composeFiles = append(composeFiles, path.Join(workDir, path.Base(file)))
+		composeFiles = append(composeFiles, path.Base(file))
 		copyRes, err := t.CopyFile(ctx, runners.FileCopyRequest{
 			Source:      file,
 			Destination: path.Join(workDir, path.Base(file)),
@@ -159,8 +167,8 @@ func (d *DockerComposeAdapter) Apply(ctx context.Context, c *manifestcore.Compon
 		Command:    cmd,
 		Env:        buildOrchManagedComposeEnv(c.Env, aCtx.envID, path.Dir(workDir), c.Name),
 		Timeout:    0,
-		Stderr:     utils.NewPrefixWriter(os.Stderr, fmt.Sprintf("-→] \033[34m[%s > %s]\033[0m ", c.Runner, c.Name)),
-		Stdout:     utils.NewPrefixWriter(os.Stdout, fmt.Sprintf("-→] \033[34m[%s > %s]\033[0m ", c.Runner, c.Name)),
+		Stderr:     utils.NewPrefixWriter(os.Stderr, utils.RunnerComponentPrefix(c.Runner, c.Name)),
+		Stdout:     utils.NewPrefixWriter(os.Stdout, utils.RunnerComponentPrefix(c.Runner, c.Name)),
 	})
 
 	if err != nil {
@@ -175,9 +183,136 @@ func (d *DockerComposeAdapter) Apply(ctx context.Context, c *manifestcore.Compon
 }
 
 func (d *DockerComposeAdapter) Destroy(ctx context.Context, c *manifestcore.Component, t runners.Runner) error {
-	cmd := exec.Command("docker-compose", "-f", c.Source.Path, "down")
-	fmt.Printf("Running docker-compose down for %s...\n", c.Source.Path)
-	return cmd.Run()
+	cfg, ok := c.LoadedConfig.(*DockerComposeConfig)
+	if !ok {
+		return fmt.Errorf("invalid config type for DockerComposeAdapter")
+	}
+
+	aCtx, ok := AdapterContextFromContext(ctx)
+	if !ok {
+		return fmt.Errorf("failed to get adapter context")
+	}
+
+	workDir := aCtx.BuildRunnerWorkDir(c.WorkDir, c.Name)
+
+	// Build compose file paths on runner
+	composeFiles := make([]string, 0, len(c.Source.Files))
+	for _, file := range c.Source.Files {
+		composeFiles = append(composeFiles, path.Base(file))
+	}
+
+	// Build docker compose down command
+	execCommand := []string{"docker", "compose"}
+	if cfg.Command != "" {
+		execCommand = strings.Split(cfg.Command, " ")
+	}
+
+	if len(cfg.Flags) > 0 {
+		execCommand = append(execCommand, cfg.Flags...)
+	}
+
+	for _, cfp := range composeFiles {
+		execCommand = append(execCommand, "-f", cfp)
+	}
+
+	cmd := append(execCommand, "-p", composeProjectName(aCtx.envID, c.Name), "down", "-v")
+
+	// Execute docker compose down on runner
+	execRes, err := t.Exec(ctx, runners.ExecCommand{
+		WorkingDir: workDir,
+		Command:    cmd,
+		Env:        buildOrchManagedComposeEnv(c.Env, aCtx.envID, path.Dir(workDir), c.Name),
+		Timeout:    0,
+		Stderr:     utils.NewPrefixWriter(os.Stderr, utils.RunnerComponentPrefix(c.Runner, c.Name)),
+		Stdout:     utils.NewPrefixWriter(os.Stdout, utils.RunnerComponentPrefix(c.Runner, c.Name)),
+	})
+
+	if err != nil {
+		return fmt.Errorf("failed to execute docker compose down: %w", err)
+	}
+
+	if execRes.Error != nil || execRes.ExitCode != 0 {
+		return fmt.Errorf("docker compose down failed with exit code %d: %v", execRes.ExitCode, execRes.Error)
+	}
+
+	return nil
+}
+
+func (d *DockerComposeAdapter) BuildState(ctx context.Context, c *manifestcore.Component, t runners.Runner, outputs ComponentApplyOutput) (state.ComponentStateData, error) {
+	cfg, ok := c.LoadedConfig.(*DockerComposeConfig)
+	if !ok {
+		return state.ComponentStateData{}, fmt.Errorf("invalid config type for DockerComposeAdapter")
+	}
+
+	aCtx, ok := AdapterContextFromContext(ctx)
+	if !ok {
+		return state.ComponentStateData{}, fmt.Errorf("failed to get adapter context")
+	}
+
+	workDir := aCtx.BuildRunnerWorkDir(c.WorkDir, c.Name)
+	composeFiles := make([]string, 0, len(c.Source.Files))
+	for _, file := range c.Source.Files {
+		composeFiles = append(composeFiles, path.Base(file))
+	}
+
+	composeState := DockerComposeState{
+		Command:      d.composeCommand(cfg),
+		ComposeFiles: composeFiles,
+		Env:          buildOrchManagedComposeEnv(nil, aCtx.envID, path.Dir(workDir), c.Name),
+		ProjectName:  composeProjectName(aCtx.envID, c.Name),
+		WorkDir:      workDir,
+	}
+
+	return state.NewComponentStateData(workDir, composeState)
+}
+
+func (d *DockerComposeAdapter) DestroyFromState(ctx context.Context, componentState state.ComponentState, t runners.Runner) error {
+	var s DockerComposeState
+	if err := mapstructure.Decode(componentState.Payload, &s); err != nil {
+		return fmt.Errorf("failed to decode docker-compose state: %w", err)
+	}
+
+	if len(s.ComposeFiles) == 0 {
+		return fmt.Errorf("docker-compose state for component %q has no compose files", componentState.Name)
+	}
+
+	execCommand := append([]string{}, s.Command...)
+	for _, cfp := range s.ComposeFiles {
+		execCommand = append(execCommand, "-f", cfp)
+	}
+
+	cmd := append(execCommand, "-p", s.ProjectName, "down", "-v")
+	execRes, err := t.Exec(ctx, runners.ExecCommand{
+		WorkingDir: s.WorkDir,
+		Command:    cmd,
+		Env:        s.Env,
+		Timeout:    0,
+		Stderr:     utils.NewPrefixWriter(os.Stderr, utils.RunnerComponentPrefix(componentState.Runner.Name, componentState.Name)),
+		Stdout:     utils.NewPrefixWriter(os.Stdout, utils.RunnerComponentPrefix(componentState.Runner.Name, componentState.Name)),
+	})
+
+	if err != nil {
+		return fmt.Errorf("failed to execute docker compose down: %w", err)
+	}
+
+	if execRes.Error != nil || execRes.ExitCode != 0 {
+		return fmt.Errorf("docker compose down failed with exit code %d: %v", execRes.ExitCode, execRes.Error)
+	}
+
+	return nil
+}
+
+func (d *DockerComposeAdapter) composeCommand(cfg *DockerComposeConfig) []string {
+	execCommand := []string{"docker", "compose"}
+	if cfg.Command != "" {
+		execCommand = strings.Split(cfg.Command, " ")
+	}
+
+	if len(cfg.Flags) > 0 {
+		execCommand = append(execCommand, cfg.Flags...)
+	}
+
+	return execCommand
 }
 
 func buildOrchManagedComposeEnv(
@@ -186,14 +321,15 @@ func buildOrchManagedComposeEnv(
 	workDir string,
 	componentName string,
 ) map[string]string {
-	if base == nil {
-		base = make(map[string]string)
+	env := make(map[string]string)
+	for key, value := range base {
+		env[key] = value
 	}
 
-	base["COMPOSE_PROJECT_NAME"] = composeProjectName(envID, componentName)
-	base["ORCH_COMPOSE_WORKING_DIR"] = workDir
-	base["ORCH_ENV_ID"] = envID
-	return base
+	env["COMPOSE_PROJECT_NAME"] = composeProjectName(envID, componentName)
+	env["ORCH_COMPOSE_WORKING_DIR"] = workDir
+	env["ORCH_ENV_ID"] = envID
+	return env
 }
 
 func init() {

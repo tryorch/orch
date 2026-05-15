@@ -17,7 +17,6 @@ const (
 type Capabilities struct {
 	Exec     bool // Ability to execute shell-like commands
 	FileCopy bool // Ability to copy files to/from the runner
-	API      bool // Ability to interact with cloud services. Usually accompanied by a specific cloud config in the runner.
 }
 
 func (c Capabilities) String() string {
@@ -27,9 +26,6 @@ func (c Capabilities) String() string {
 	}
 	if c.FileCopy {
 		caps = append(caps, "FileCopy")
-	}
-	if c.API {
-		caps = append(caps, "API")
 	}
 
 	return "[" + strings.Join(caps, ", ") + "]"

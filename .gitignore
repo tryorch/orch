@@ -35,3 +35,8 @@ go.work.sum
 /.idea/
 /.orch/
 /orch/
+bin/
+
+# Local markdown notes
+*.md
+!README.md

@@ -1,0 +1,25 @@
+version: orch.io/1.0
+
+metadata:
+  id: cloudformation-smoke
+  description: Local CloudFormation smoke test
+  owner:
+    name: Orch
+    email: orch@example.com
+
+runners:
+  local:
+    type: local
+    config: {}
+
+components:
+  cf:
+    type: cloudformation
+    runner: local
+    workdir: ./tests/cloudformation-smoke/.workdir
+    source:
+      files:
+        - ./tests/cloudformation-smoke/template.yml
+    config:
+      tags:
+        OrchSmoke: cloudformation

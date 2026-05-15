@@ -84,16 +84,23 @@ func main() {
 		Use:   "down",
 		Short: "Tear down resources from last run",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := utils.ValidateEnvID(envID); err != nil {
+				return fmt.Errorf("invalid env-id: %w", err)
+			}
+
 			m, err := manifest.Load(manifestPath, logger)
 			if err != nil {
 				return err
 			}
-			return orchestration.RunDown(m, logger.With(
+			return orchestration.RunDown(envID, m, logger.With(
 				logging.Field{Key: "command", Value: "down"},
 				logging.Field{Key: "manifest", Value: manifestPath},
 			))
 		},
 	}
+	downCmd.PersistentFlags().StringVarP(&manifestPath, "file", "f", "orch.yaml", "Path to manifest")
+	downCmd.PersistentFlags().StringVarP(&envID, "env-id", "e", "", "Environment ID")
+	_ = downCmd.MarkPersistentFlagRequired("env-id")
 
 	versionCmd := &cobra.Command{
 		Use:   "version",

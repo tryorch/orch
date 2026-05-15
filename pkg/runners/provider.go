@@ -4,7 +4,7 @@ import "github.com/go-viper/mapstructure/v2"
 
 type ProviderConfig interface {
 	IsConfigured() bool
-	GetEnvVars() map[string]string
+	BuildEnvVars() map[string]string
 }
 
 type AWSProviderConfig struct {
@@ -17,7 +17,7 @@ func (a *AWSProviderConfig) IsConfigured() bool {
 	return a.Region != "" && a.AccessKeyID != "" && a.SecretAccessKey != ""
 }
 
-func (a *AWSProviderConfig) GetEnvVars() map[string]string {
+func (a *AWSProviderConfig) BuildEnvVars() map[string]string {
 	envs := make(map[string]string)
 	if a.Region != "" {
 		envs["AWS_REGION"] = a.Region
@@ -38,7 +38,7 @@ type AggregatedProviderConfig struct {
 func (a *AggregatedProviderConfig) GetAllEnvVars() map[string]string {
 	envs := make(map[string]string)
 	if a.AWS != nil && a.AWS.IsConfigured() {
-		for k, v := range a.AWS.GetEnvVars() {
+		for k, v := range a.AWS.BuildEnvVars() {
 			envs[k] = v
 		}
 	}
@@ -46,7 +46,7 @@ func (a *AggregatedProviderConfig) GetAllEnvVars() map[string]string {
 	return envs
 }
 
-func RetrieveProviderConfigForExecutionContext(config map[string]interface{}) (map[string]string, *AggregatedProviderConfig, error) {
+func RetrieveProviderConfigForRunner(config map[string]interface{}) (map[string]string, *AggregatedProviderConfig, error) {
 	var pcfg AggregatedProviderConfig
 	if err := mapstructure.Decode(config, &pcfg); err != nil {
 		return nil, nil, err
