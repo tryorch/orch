@@ -46,15 +46,28 @@ type RunnerManifest struct {
 
 type ComponentType string
 
+type Hook struct {
+	Command string            `yaml:"command"`
+	Env     map[string]string `yaml:"env,omitempty"`
+}
+
 type Hooks struct {
-	Create struct {
-		PreRun  []string `yaml:"preRun,omitempty"`
-		PostRun []string `yaml:"postRun,omitempty"`
-	} `yaml:"create,omitempty"`
-	Destroy struct {
-		PreRun  []string `yaml:"preRun,omitempty"`
-		PostRun []string `yaml:"postRun,omitempty"`
-	} `yaml:"destroy,omitempty"`
+	PreApply    []Hook `yaml:"pre_apply,omitempty"`
+	PostApply   []Hook `yaml:"post_apply,omitempty"`
+	PreDestroy  []Hook `yaml:"pre_destroy,omitempty"`
+	PostDestroy []Hook `yaml:"post_destroy,omitempty"`
+}
+
+func (h Hooks) HasApplyHooks() bool {
+	return len(h.PreApply) > 0 || len(h.PostApply) > 0
+}
+
+func (h Hooks) HasDestroyHooks() bool {
+	return len(h.PreDestroy) > 0 || len(h.PostDestroy) > 0
+}
+
+func (h Hooks) HasAny() bool {
+	return h.HasApplyHooks() || h.HasDestroyHooks()
 }
 
 type ComponentSource struct {

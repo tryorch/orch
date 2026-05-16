@@ -21,14 +21,14 @@ components:
       key2: value
 
     hooks:                       # Lifecycle scripts tied to this component
-      pre_create:
-        - "scripts/prep.sh"
-      post_create:
-        - "scripts/check_health.sh"
+      pre_apply:
+        - command: "scripts/prep.sh"
+      post_apply:
+        - command: "scripts/check_health.sh ${database.outputs.url}"
       pre_destroy:
-        - "scripts/backup.sh"
+        - command: "scripts/backup.sh"
       post_destroy:
-        - "scripts/cleanup.sh"
+        - command: "scripts/cleanup.sh"
 
     outputs:                     # Names of expected outputs for interpolation or reporting
       - "endpoint"

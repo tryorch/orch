@@ -52,19 +52,19 @@ cloud:
 # Lifecycle Hooks
 # ------------------------------------------------------------------------------
 hooks:
-  preRun:
-    - "scripts/setup_env.sh"
-    - "scripts/migrate_db.sh"
+  pre_apply:
+    - command: "scripts/setup_env.sh"
+    - command: "scripts/migrate_db.sh ${database.outputs.url}"
 
-  postRun:
-    - "scripts/notify_team.sh"
-    - "scripts/cleanup_temp_files.sh"
+  post_apply:
+    - command: "scripts/notify_team.sh"
+    - command: "scripts/cleanup_temp_files.sh"
 
-  preDestroy:
-    - "scripts/backup_data.sh"
+  pre_destroy:
+    - command: "scripts/backup_data.sh"
 
-  postDestroy:
-    - "scripts/post_teardown_metrics.sh"
+  post_destroy:
+    - command: "scripts/post_teardown_metrics.sh"
 
 # ------------------------------------------------------------------------------
 # Components (core building blocks)

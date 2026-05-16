@@ -28,12 +28,16 @@ func (a AdapterContext) BuildRunnerWorkDir(baseWorkDir, componentName string) st
 	return path.Join(baseWorkDir, "orch", a.envID, componentName)
 }
 
-func NewAdapterContext(ctx context.Context, id string, logger logging.DebugLogger, emitter events.Emitter) context.Context {
-	return context.WithValue(ctx, AdapterContextKey, AdapterContext{
+func NewAdapterContext(id string, logger logging.DebugLogger, emitter events.Emitter) AdapterContext {
+	return AdapterContext{
 		envID:   id,
 		logger:  logger,
 		emitter: emitter,
-	})
+	}
+}
+
+func WithAdapterContext(ctx context.Context, aCtx AdapterContext) context.Context {
+	return context.WithValue(ctx, AdapterContextKey, aCtx)
 }
 
 func AdapterContextFromContext(ctx context.Context) (AdapterContext, bool) {

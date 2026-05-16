@@ -11,6 +11,7 @@ import (
 	"orch.io/pkg/runners"
 	"orch.io/pkg/state"
 	statebackends "orch.io/pkg/state/backends"
+	"orch.io/pkg/varresolvers"
 )
 
 func RunDown(envID string, m *manifestcore.Manifest, logger logging.Logger) error {
@@ -26,8 +27,25 @@ func RunDown(envID string, m *manifestcore.Manifest, logger logging.Logger) erro
 		return fmt.Errorf("failed to load state: %w", err)
 	}
 
+	componentsByName := make(map[string]*manifestcore.Component, len(m.Components))
+	for i := range m.Components {
+		componentsByName[m.Components[i].Name] = &m.Components[i]
+	}
+
+	componentResolver := varresolvers.NewComponentResolver()
+	for _, componentState := range currentState.Components {
+		componentResolver.RegisterPersistedComponentOutput(componentState.Name, componentState.Outputs)
+	}
+	resolvers := &varresolvers.ChainResolver{
+		Resolvers: []varresolvers.Resolver{
+			varresolvers.NewEnvResolver(),
+			componentResolver,
+		},
+	}
+
 	emitter := events.NewRendererEmitter()
-	ctx := adapters.NewAdapterContext(context.Background(), envID, logger.AsDebugLogger(), emitter)
+	adapterCtx := adapters.NewAdapterContext(envID, logger.AsDebugLogger(), emitter)
+	ctx := adapters.WithAdapterContext(context.Background(), adapterCtx)
 	allRunners, err := runners.FromManifestRunnersMap(m.Runners)
 	if err != nil {
 		return fmt.Errorf("failed to create runners from manifest: %w", err)
@@ -49,6 +67,12 @@ func RunDown(envID string, m *manifestcore.Manifest, logger logging.Logger) erro
 			return fmt.Errorf("runner %q uses non-ambient credentials (%v); destroy only supports ambient auth",
 				t.Name(), list)
 		}
+
+		if component, ok := componentsByName[componentState.Name]; ok {
+			if err := validateLifecycleHooksForRunner(component.Name, component.Hooks, t); err != nil {
+				return err
+			}
+		}
 	}
 
 	for i := len(currentState.Components) - 1; i >= 0; i-- {
@@ -69,6 +93,20 @@ func RunDown(envID string, m *manifestcore.Manifest, logger logging.Logger) erro
 			return fmt.Errorf("component %s artifact restore failed: %w", componentState.Name, err)
 		}
 
+		if component, ok := componentsByName[componentState.Name]; ok {
+			if err := runLifecycleHooks(ctx, t, component.Hooks.PreDestroy, lifecyclePreDestroy, hookExecutionContext{
+				envID:        envID,
+				componentRef: component,
+				component:    componentState.Name,
+				runner:       t.Name(),
+				workDir:      componentState.WorkDir,
+				baseEnv:      component.Env,
+				resolver:     resolvers,
+			}); err != nil {
+				return fmt.Errorf("component %q pre_destroy hook failed: %w", componentState.Name, err)
+			}
+		}
+
 		if err := adapter.DestroyFromState(ctx, componentState, t); err != nil {
 			return fmt.Errorf("component %s destroy failed: %w", componentState.Name, err)
 		}
@@ -76,6 +114,20 @@ func RunDown(envID string, m *manifestcore.Manifest, logger logging.Logger) erro
 		currentState.MarkComponentDestroyed(componentState.Name)
 		if err := stateManager.Save(currentState); err != nil {
 			return fmt.Errorf("failed to save state after destroying component %q: %w", componentState.Name, err)
+		}
+
+		if component, ok := componentsByName[componentState.Name]; ok {
+			if err := runLifecycleHooks(ctx, t, component.Hooks.PostDestroy, lifecyclePostDestroy, hookExecutionContext{
+				envID:        envID,
+				componentRef: component,
+				component:    componentState.Name,
+				runner:       t.Name(),
+				workDir:      componentState.WorkDir,
+				baseEnv:      component.Env,
+				resolver:     resolvers,
+			}); err != nil {
+				return fmt.Errorf("component %q post_destroy hook failed: %w", componentState.Name, err)
+			}
 		}
 	}
 

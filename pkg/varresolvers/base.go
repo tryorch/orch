@@ -13,14 +13,22 @@ type Resolver interface {
 var re = regexp.MustCompile(`\$\{([^}]+)}`)
 
 func InterpolateString(ctx context.Context, s string, resolver Resolver) (string, error) {
-	return re.ReplaceAllStringFunc(s, func(match string) string {
+	var firstErr error
+	out := re.ReplaceAllStringFunc(s, func(match string) string {
 		key := match[2 : len(match)-1] // strip ${ and }
 		val, err := resolver.Resolve(ctx, key)
 		if err != nil {
-			return ""
+			if firstErr == nil {
+				firstErr = fmt.Errorf("resolving %q: %w", key, err)
+			}
+			return match
 		}
 		return val
-	}), nil
+	})
+	if firstErr != nil {
+		return "", firstErr
+	}
+	return out, nil
 }
 
 func deepInterpolateValue(

@@ -40,4 +40,5 @@ bin/
 # Local markdown notes
 *.md
 !README.md
+!md/lifecycle-hooks.md
 !md/state-backends.md

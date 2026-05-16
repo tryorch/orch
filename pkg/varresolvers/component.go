@@ -43,7 +43,9 @@ func (r *ComponentResolver) Resolve(ctx context.Context, expr string) (string, e
 	return "", fmt.Errorf("component %q not yet executed", compName)
 }
 
-// RegisterComponentOutput Called by adapters after a component finishes
+// RegisterComponentOutput stores freshly produced adapter outputs after apply.
+// Only outputs declared by the component manifest are made available for
+// interpolation.
 func (r *ComponentResolver) RegisterComponentOutput(componentName string, keys []string, outputs map[string]string) {
 	r.mutex.Lock()
 	defer r.mutex.Unlock()
@@ -52,6 +54,18 @@ func (r *ComponentResolver) RegisterComponentOutput(componentName string, keys [
 		if !slices.Contains(keys, outputName) {
 			continue // skip outputs not defined in the manifest
 		}
+		key := componentName + ".outputs." + outputName
+		r.outputs[key] = value
+	}
+}
+
+// RegisterPersistedComponentOutput rehydrates outputs that were already filtered
+// and persisted in state, such as when destroy hooks need interpolation.
+func (r *ComponentResolver) RegisterPersistedComponentOutput(componentName string, outputs map[string]string) {
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
+
+	for outputName, value := range outputs {
 		key := componentName + ".outputs." + outputName
 		r.outputs[key] = value
 	}

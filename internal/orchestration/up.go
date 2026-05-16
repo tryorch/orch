@@ -37,7 +37,8 @@ func RunUp(envID string, m *manifestcore.Manifest, logger logging.Logger, inputs
 	}
 
 	emitter := events.NewRendererEmitter()
-	ctx := adapters.NewAdapterContext(context.Background(), envID, logger.AsDebugLogger(), emitter)
+	adapterCtx := adapters.NewAdapterContext(envID, logger.AsDebugLogger(), emitter)
+	ctx := adapters.WithAdapterContext(context.Background(), adapterCtx)
 	stateBackend, err := statebackends.FromManifestContext(context.Background(), m.State, logger.AsDebugLogger())
 	if err != nil {
 		return fmt.Errorf("failed to configure state backend: %w", err)
@@ -108,33 +109,9 @@ func RunUp(envID string, m *manifestcore.Manifest, logger logging.Logger, inputs
 			return fmt.Errorf("component \"%s\" requires capabilities %v which are not satisfied by runner \"%s\" capabilities %v",
 				c.Name, adapter.RequiredCapabilities(), t.Name(), t.Capabilities())
 		}
-
-		// Interpolate variables in component properties
-		resolvedConfig, err := varresolvers.DeepInterpolate(ctx, c.Config, resolvers)
-		for key, value := range resolvedConfig {
-			if err == nil {
-				c.Config[key] = value
-			}
+		if err := validateLifecycleHooksForRunner(c.Name, c.Hooks, t); err != nil {
+			return err
 		}
-
-		// Interpolate variables in component environment variables
-		for key, value := range c.Env {
-			resolvedValue, err := varresolvers.InterpolateString(ctx, value, resolvers)
-			if err == nil {
-				c.Env[key] = resolvedValue
-			}
-		}
-
-		cfg, warnings, err := adapter.ValidateAndLoadConfig(ctx, c)
-		if err != nil {
-			return fmt.Errorf("component \"%s\" config validation failed: %w", c.Name, err)
-		}
-
-		for _, warning := range warnings {
-			emitter.Emit(warning)
-		}
-
-		c.LoadedConfig = cfg
 
 		jobs = append(jobs, job{
 			c: c,
@@ -156,6 +133,43 @@ func RunUp(envID string, m *manifestcore.Manifest, logger logging.Logger, inputs
 			Runner:    component.Runner,
 			Component: component.Name,
 		})
+
+		preApplyWorkDir := adapterCtx.BuildRunnerWorkDir(component.WorkDir, component.Name)
+
+		resolvedConfig, err := varresolvers.DeepInterpolate(ctx, component.Config, resolvers)
+		if err != nil {
+			return fmt.Errorf("component %q config interpolation failed: %w", component.Name, err)
+		}
+		component.Config = resolvedConfig
+
+		resolvedEnv, err := interpolateEnv(ctx, component.Env, resolvers)
+		if err != nil {
+			return fmt.Errorf("component %q env interpolation failed: %w", component.Name, err)
+		}
+		component.Env = componentExecutionEnv(envID, component, runner.Name(), resolvedEnv)
+
+		cfg, warnings, err := adapter.ValidateAndLoadConfig(ctx, component)
+		if err != nil {
+			return fmt.Errorf("component \"%s\" config validation failed: %w", component.Name, err)
+		}
+
+		for _, warning := range warnings {
+			emitter.Emit(warning)
+		}
+
+		component.LoadedConfig = cfg
+
+		if err := runLifecycleHooks(ctx, runner, component.Hooks.PreApply, lifecyclePreApply, hookExecutionContext{
+			envID:        envID,
+			componentRef: component,
+			component:    component.Name,
+			runner:       runner.Name(),
+			workDir:      preApplyWorkDir,
+			baseEnv:      component.Env,
+			resolver:     resolvers,
+		}); err != nil {
+			return fmt.Errorf("component %q pre_apply hook failed: %w", component.Name, err)
+		}
 
 		applyResult, err := adapter.Apply(ctx, component, runner)
 		if err != nil {
@@ -179,6 +193,18 @@ func RunUp(envID string, m *manifestcore.Manifest, logger logging.Logger, inputs
 		}
 		if err := stateManager.Save(currentState); err != nil {
 			return fmt.Errorf("failed to save state for component %q: %w", component.Name, err)
+		}
+
+		if err := runLifecycleHooks(ctx, runner, component.Hooks.PostApply, lifecyclePostApply, hookExecutionContext{
+			envID:        envID,
+			componentRef: component,
+			component:    component.Name,
+			runner:       runner.Name(),
+			workDir:      applyResult.State.WorkDir,
+			baseEnv:      component.Env,
+			resolver:     resolvers,
+		}); err != nil {
+			return fmt.Errorf("component %q post_apply hook failed: %w", component.Name, err)
 		}
 	}
 
