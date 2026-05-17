@@ -37,14 +37,15 @@ func RunUp(envID string, m *manifestcore.Manifest, logger logging.Logger, inputs
 	}
 
 	emitter := events.NewRendererEmitter()
-	adapterCtx := adapters.NewAdapterContext(envID, logger.AsDebugLogger(), emitter)
+	debugLogger := logger.AsDebugLogger()
+	adapterCtx := adapters.NewAdapterContext(envID, debugLogger, emitter)
 	ctx := adapters.WithAdapterContext(context.Background(), adapterCtx)
-	stateBackend, err := statebackends.FromManifestContext(context.Background(), m.State, logger.AsDebugLogger())
+	stateBackend, err := statebackends.FromManifestContext(context.Background(), m.State, debugLogger)
 	if err != nil {
 		return fmt.Errorf("failed to configure state backend: %w", err)
 	}
 	stateManager := state.NewManager(envID, stateBackend)
-	currentState, err := stateManager.LoadOrNew(m.Metadata.ID)
+	currentState, err := stateManager.LoadOrNew(m.Metadata.ID, debugLogger)
 	if err != nil {
 		return fmt.Errorf("failed to initialize state: %w", err)
 	}
@@ -62,6 +63,7 @@ func RunUp(envID string, m *manifestcore.Manifest, logger logging.Logger, inputs
 	if err != nil {
 		return err
 	}
+	defer disconnectAllRunners(allRunners, emitter)
 
 	componentsInOrder, err := TopologicallySortComponents(m.Components)
 	if err != nil {
@@ -125,6 +127,40 @@ func RunUp(envID string, m *manifestcore.Manifest, logger logging.Logger, inputs
 		adapter := *j.a
 		runner := *j.r
 
+		if componentState, ok := currentState.FindComponent(component.Name); ok {
+			switch componentState.Status {
+			case state.StatusApplied:
+				componentResolver.RegisterPersistedComponentOutput(component.Name, componentState.Outputs)
+				componentResolver.RegisterUnavailableSensitiveOutputs(component.Name, component.Outputs, componentState.Outputs)
+				emitter.Emit(events.Event{
+					Type:      events.EventInfo,
+					Message:   "component already applied; skipping",
+					Adapter:   component.Type,
+					Runner:    component.Runner,
+					Component: component.Name,
+				})
+				continue
+			case state.StatusApplying:
+				emitter.Emit(events.Event{
+					Type:      events.EventWarning,
+					Message:   "component was applying in a previous run; retrying",
+					Adapter:   component.Type,
+					Runner:    component.Runner,
+					Component: component.Name,
+				})
+			case state.StatusFailed:
+				emitter.Emit(events.Event{
+					Type:      events.EventInfo,
+					Message:   "component failed in a previous run; retrying",
+					Adapter:   component.Type,
+					Runner:    component.Runner,
+					Component: component.Name,
+				})
+			case state.StatusDestroying:
+				return fmt.Errorf("component %q was destroying in a previous run; run down again to finish cleanup before applying", component.Name)
+			}
+		}
+
 		emitter.Emit(events.Event{
 			Type:      events.EventStart,
 			Message:   fmt.Sprintf("starting apply for component"),
@@ -133,22 +169,32 @@ func RunUp(envID string, m *manifestcore.Manifest, logger logging.Logger, inputs
 			Component: component.Name,
 		})
 
-		preApplyWorkDir := adapterCtx.BuildRunnerWorkDir(component.WorkDir, component.Name)
+		runnerWorkDir := adapterCtx.BuildRunnerWorkDir(component.WorkDir, component.Name)
+		currentState.BeginComponentApply(component, runner.Type(), runnerWorkDir)
+		if err = stateManager.Save(currentState); err != nil {
+			return fmt.Errorf("component initial status registration failed: %w", err)
+		}
 
 		resolvedConfig, err := varresolvers.DeepInterpolate(ctx, component.Config, resolvers)
 		if err != nil {
+			currentState.MarkComponentFailed(component.Name)
+			_ = stateManager.Save(currentState)
 			return fmt.Errorf("component %q config interpolation failed: %w", component.Name, err)
 		}
 		component.Config = resolvedConfig
 
 		resolvedEnv, err := interpolateEnv(ctx, component.Env, resolvers)
 		if err != nil {
+			currentState.MarkComponentFailed(component.Name)
+			_ = stateManager.Save(currentState)
 			return fmt.Errorf("component %q env interpolation failed: %w", component.Name, err)
 		}
 		component.Env = componentExecutionEnv(envID, component, runner.Name(), resolvedEnv)
 
 		cfg, warnings, err := adapter.ValidateAndLoadConfig(ctx, component)
 		if err != nil {
+			currentState.MarkComponentFailed(component.Name)
+			_ = stateManager.Save(currentState)
 			return fmt.Errorf("component \"%s\" config validation failed: %w", component.Name, err)
 		}
 
@@ -157,21 +203,33 @@ func RunUp(envID string, m *manifestcore.Manifest, logger logging.Logger, inputs
 		}
 
 		component.LoadedConfig = cfg
+		currentState.BeginComponentApply(component, runner.Type(), runnerWorkDir)
+		if err := stateManager.Save(currentState); err != nil {
+			return fmt.Errorf("failed to save applying state for component %q: %w", component.Name, err)
+		}
 
 		if err := runLifecycleHooks(ctx, runner, component.Hooks.PreApply, lifecyclePreApply, hookExecutionContext{
 			envID:        envID,
 			componentRef: component,
 			component:    component.Name,
 			runner:       runner.Name(),
-			workDir:      preApplyWorkDir,
+			workDir:      runnerWorkDir,
 			baseEnv:      component.Env,
 			resolver:     resolvers,
 		}); err != nil {
+			currentState.MarkComponentFailed(component.Name)
+			if saveErr := stateManager.Save(currentState); saveErr != nil {
+				return fmt.Errorf("component %q pre_apply hook failed: %w (also failed to save failed state: %v)", component.Name, err, saveErr)
+			}
 			return fmt.Errorf("component %q pre_apply hook failed: %w", component.Name, err)
 		}
 
 		applyResult, err := adapter.Apply(ctx, component, runner)
 		if err != nil {
+			currentState.MarkComponentFailed(component.Name)
+			if saveErr := stateManager.Save(currentState); saveErr != nil {
+				return fmt.Errorf("component %q failed to apply: %w (also failed to save failed state: %v)", component.Name, err, saveErr)
+			}
 			emitter.Emit(events.Event{
 				Type:      events.EventFailure,
 				Message:   fmt.Sprintf("failed to apply component"),
@@ -184,15 +242,31 @@ func RunUp(envID string, m *manifestcore.Manifest, logger logging.Logger, inputs
 			return fmt.Errorf("component \"%s\" failed to apply", component.Name)
 		}
 		if err := validateApplyOutputs(component, applyResult.Outputs, emitter); err != nil {
+			failedState := state.NewComponentState(component, runner.Type(), map[string]string{}, applyResult.State)
+			failedState.Status = state.StatusFailed
+			currentState.UpsertComponent(failedState)
+			if artifactErr := stateManager.CaptureArtifacts(ctx, failedState, runner); artifactErr != nil {
+				if saveErr := stateManager.Save(currentState); saveErr != nil {
+					return fmt.Errorf("component %q output validation failed: %w (also failed to capture artifacts: %v and failed to save failed state: %v)", component.Name, err, artifactErr, saveErr)
+				}
+				return fmt.Errorf("component %q output validation failed: %w (also failed to capture artifacts: %v)", component.Name, err, artifactErr)
+			}
+			if saveErr := stateManager.Save(currentState); saveErr != nil {
+				return fmt.Errorf("component %q output validation failed: %w (also failed to save failed state: %v)", component.Name, err, saveErr)
+			}
 			return err
 		}
 		declaredOutputs := filterDeclaredOutputs(component, applyResult.Outputs)
 		stateOutputs := filterStateOutputs(component, declaredOutputs)
 		componentResolver.RegisterComponentOutput(component.Name, component.Outputs, declaredOutputs)
 
-		componentState := state.NewComponentState(component, string(runner.Type()), stateOutputs, applyResult.State)
+		componentState := state.NewComponentState(component, runner.Type(), stateOutputs, applyResult.State)
 		currentState.UpsertComponent(componentState)
 		if err := stateManager.CaptureArtifacts(ctx, componentState, runner); err != nil {
+			currentState.MarkComponentFailed(component.Name)
+			if saveErr := stateManager.Save(currentState); saveErr != nil {
+				return fmt.Errorf("failed to capture state artifacts for component %q: %w (also failed to save failed state: %v)", component.Name, err, saveErr)
+			}
 			return fmt.Errorf("failed to capture state artifacts for component %q: %w", component.Name, err)
 		}
 		if err := stateManager.Save(currentState); err != nil {
@@ -208,18 +282,11 @@ func RunUp(envID string, m *manifestcore.Manifest, logger logging.Logger, inputs
 			baseEnv:      component.Env,
 			resolver:     resolvers,
 		}); err != nil {
+			currentState.MarkComponentFailed(component.Name)
+			if saveErr := stateManager.Save(currentState); saveErr != nil {
+				return fmt.Errorf("component %q post_apply hook failed: %w (also failed to save failed state: %v)", component.Name, err, saveErr)
+			}
 			return fmt.Errorf("component %q post_apply hook failed: %w", component.Name, err)
-		}
-	}
-
-	// Disconnect all runners
-	for _, t := range allRunners {
-		if err := t.Disconnect(); err != nil {
-			emitter.Emit(events.Event{
-				Type:    events.EventWarning,
-				Message: fmt.Sprintf("failed to disconnect from runner \"%s\": %v", t.Name(), err),
-				Runner:  t.Name(),
-			})
 		}
 	}
 

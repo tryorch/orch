@@ -35,6 +35,9 @@ func RunDown(envID string, m *manifestcore.Manifest, logger logging.Logger) erro
 	componentResolver := varresolvers.NewComponentResolver()
 	for _, componentState := range currentState.Components {
 		componentResolver.RegisterPersistedComponentOutput(componentState.Name, componentState.Outputs)
+		if component, ok := componentsByName[componentState.Name]; ok {
+			componentResolver.RegisterUnavailableSensitiveOutputs(componentState.Name, component.Outputs, componentState.Outputs)
+		}
 	}
 	resolvers := &varresolvers.ChainResolver{
 		Resolvers: []varresolvers.Resolver{
@@ -44,7 +47,8 @@ func RunDown(envID string, m *manifestcore.Manifest, logger logging.Logger) erro
 	}
 
 	emitter := events.NewRendererEmitter()
-	adapterCtx := adapters.NewAdapterContext(envID, logger.AsDebugLogger(), emitter)
+	debugLogger := logger.AsDebugLogger()
+	adapterCtx := adapters.NewAdapterContext(envID, debugLogger, emitter)
 	ctx := adapters.WithAdapterContext(context.Background(), adapterCtx)
 	allRunners, err := runners.FromManifestRunnersMap(m.Runners)
 	if err != nil {
@@ -105,6 +109,11 @@ func RunDown(envID string, m *manifestcore.Manifest, logger logging.Logger) erro
 			}); err != nil {
 				return fmt.Errorf("component %q pre_destroy hook failed: %w", componentState.Name, err)
 			}
+		}
+
+		currentState.MarkComponentDestroying(componentState.Name)
+		if err := stateManager.Save(currentState); err != nil {
+			return fmt.Errorf("failed to save destroying state for component %q: %w", componentState.Name, err)
 		}
 
 		if err := adapter.DestroyFromState(ctx, componentState, t); err != nil {

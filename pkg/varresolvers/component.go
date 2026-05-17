@@ -11,13 +11,15 @@ import (
 )
 
 type ComponentResolver struct {
-	outputs map[string]string // componentName -> outputName -> value
-	mutex   sync.RWMutex      // thread-safe for concurrent component execution
+	outputs                        map[string]string // componentName.outputs.outputName -> value
+	unavailableSensitiveOutputRefs map[string]struct{}
+	mutex                          sync.RWMutex // thread-safe for concurrent component execution
 }
 
 func NewComponentResolver() *ComponentResolver {
 	return &ComponentResolver{
-		outputs: make(map[string]string),
+		outputs:                        make(map[string]string),
+		unavailableSensitiveOutputRefs: make(map[string]struct{}),
 	}
 }
 
@@ -34,6 +36,14 @@ func (r *ComponentResolver) Resolve(ctx context.Context, expr string) (string, e
 
 	if comp, ok := r.outputs[expr]; ok {
 		return comp, nil
+	}
+
+	if _, ok := r.unavailableSensitiveOutputRefs[expr]; ok {
+		return "", fmt.Errorf(
+			"sensitive output %q is unavailable because component %q was already applied and skipped; sensitive outputs are not persisted in state",
+			expr,
+			compName,
+		)
 	}
 
 	for key := range r.outputs {
@@ -60,6 +70,7 @@ func (r *ComponentResolver) RegisterComponentOutput(componentName string, declar
 		}
 		key := componentName + ".outputs." + outputName
 		r.outputs[key] = value
+		delete(r.unavailableSensitiveOutputRefs, key)
 	}
 }
 
@@ -72,5 +83,30 @@ func (r *ComponentResolver) RegisterPersistedComponentOutput(componentName strin
 	for outputName, value := range outputs {
 		key := componentName + ".outputs." + outputName
 		r.outputs[key] = value
+		delete(r.unavailableSensitiveOutputRefs, key)
+	}
+}
+
+// RegisterUnavailableSensitiveOutputs records sensitive outputs that exist in
+// the manifest but cannot be rehydrated from persisted state. This keeps normal
+// skipped-component behavior lazy: a skipped component can still provide
+// non-sensitive persisted outputs, but a later interpolation of a sensitive
+// output receives an explicit error instead of a vague "not found".
+func (r *ComponentResolver) RegisterUnavailableSensitiveOutputs(componentName string, declared []manifestcore.Output, persisted map[string]string) {
+	r.mutex.Lock()
+	defer r.mutex.Unlock()
+
+	for _, output := range declared {
+		if !output.Sensitive {
+			continue
+		}
+		if _, ok := persisted[output.Name]; ok {
+			continue
+		}
+		key := componentName + ".outputs." + output.Name
+		if _, ok := r.outputs[key]; ok {
+			continue
+		}
+		r.unavailableSensitiveOutputRefs[key] = struct{}{}
 	}
 }

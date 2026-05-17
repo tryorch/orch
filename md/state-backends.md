@@ -51,20 +51,23 @@ s3://my-orch-state/previews/pr-123/artifacts/tf/terraform.tfstate
 
 ## Write ordering
 
-After a component applies successfully, Orch builds the component state in memory, captures declared artifacts first, and then writes `state.json`.
+Orch writes component state before and after risky lifecycle steps. Before adapter apply, the component is marked `applying` and the state document is saved. After a successful apply, Orch builds the final component state in memory, captures declared artifacts first, and then writes `state.json` with status `applied`.
 
 This ordering is intentional. A newly written state document should not reference artifacts that failed to persist.
 
-Current order:
+Successful apply order:
 
 ```text
+mark component applying
+save state.json
 apply component
 build component state
 capture artifacts
+mark component applied
 save state.json
 ```
 
-This is not fully transactional. A failure after apply but before `state.json` can still leave resources alive without a fresh state document. A future remote backend should add revisions or commit markers if we need stronger guarantees.
+This is not fully transactional. A failure after apply but before final `state.json` can still leave resources alive with a component marked `applying` or `failed`. A future remote backend should add revisions or commit markers if we need stronger guarantees.
 
 ## Artifacts
 

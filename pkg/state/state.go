@@ -7,20 +7,25 @@ import (
 	"strings"
 	"time"
 
+	"orch.io/pkg/logging"
 	manifestcore "orch.io/pkg/manifest/core"
+	"orch.io/pkg/runners"
 )
 
 type Status string
 
 const (
-	StatusApplied   Status = "applied"
-	StatusDestroyed Status = "destroyed"
+	StatusApplying   Status = "applying"
+	StatusApplied    Status = "applied"
+	StatusFailed     Status = "failed"
+	StatusDestroying Status = "destroying"
+	StatusDestroyed  Status = "destroyed"
 )
 
 // RunnerRef identifies the execution context without persisting credentials.
 type RunnerRef struct {
-	Name string `json:"name"`
-	Type string `json:"type"`
+	Name string             `json:"name"`
+	Type runners.RunnerType `json:"type"`
 }
 
 type ComponentStateData struct {
@@ -59,6 +64,8 @@ type OrchState struct {
 	Components []ComponentState `json:"components"`
 	CreatedAt  string           `json:"created_at"`
 	UpdatedAt  string           `json:"updated_at"`
+
+	logger logging.DebugLogger
 }
 
 // Manager handles persistence of orch state
@@ -71,7 +78,7 @@ func NewManager(envID string, backend Backend) *Manager {
 	return &Manager{envID: envID, backend: backend}
 }
 
-func New(envID, manifestID string) *OrchState {
+func New(envID, manifestID string, logger logging.DebugLogger) *OrchState {
 	now := time.Now().UTC().Format(time.RFC3339)
 	return &OrchState{
 		EnvID:      envID,
@@ -79,16 +86,17 @@ func New(envID, manifestID string) *OrchState {
 		Components: make([]ComponentState, 0),
 		CreatedAt:  now,
 		UpdatedAt:  now,
+		logger:     logger,
 	}
 }
 
-func (sm *Manager) LoadOrNew(manifestID string) (*OrchState, error) {
+func (sm *Manager) LoadOrNew(manifestID string, logger logging.DebugLogger) (*OrchState, error) {
 	exists, err := sm.Exists(context.Background())
 	if err != nil {
 		return nil, err
 	}
 	if !exists {
-		return New(sm.envID, manifestID), nil
+		return New(sm.envID, manifestID, logger), nil
 	}
 
 	current, err := sm.Load()
@@ -126,11 +134,76 @@ func (s *OrchState) UpsertComponent(component ComponentState) {
 	s.UpdatedAt = now
 }
 
+func (s *OrchState) FindComponent(name string) (ComponentState, bool) {
+	for _, component := range s.Components {
+		if component.Name == name {
+			return component, true
+		}
+	}
+	return ComponentState{}, false
+}
+
+func (s *OrchState) BeginComponentApply(component *manifestcore.Component, runnerType runners.RunnerType, workDir string) {
+	now := time.Now().UTC().Format(time.RFC3339)
+	for i := range s.Components {
+		if s.Components[i].Name == component.Name {
+			s.Components[i].Type = component.Type
+			s.Components[i].Runner = RunnerRef{
+				Name: component.Runner,
+				Type: runnerType,
+			}
+			s.Components[i].Source = component.Source
+			s.Components[i].WorkDir = workDir
+			s.Components[i].NonSensitiveConfig = SanitizeMap(component.Config)
+			s.Components[i].Status = StatusApplying
+			s.Components[i].UpdatedAt = now
+			s.UpdatedAt = now
+			return
+		}
+	}
+
+	// create new if not found.
+	s.Components = append(s.Components, ComponentState{
+		Name: component.Name,
+		Type: component.Type,
+		Runner: RunnerRef{
+			Name: component.Runner,
+			Type: runnerType,
+		},
+		Source:             component.Source,
+		WorkDir:            workDir,
+		NonSensitiveConfig: SanitizeMap(component.Config),
+		Outputs:            make(map[string]string),
+		Payload:            make(map[string]interface{}),
+		Status:             StatusApplying,
+		ProvisionedAt:      now,
+		UpdatedAt:          now,
+	})
+	s.UpdatedAt = now
+}
+
+func (s *OrchState) MarkComponentFailed(name string) {
+	s.markComponentStatus(name, StatusFailed)
+}
+
+func (s *OrchState) MarkComponentDestroying(name string) {
+	s.markComponentStatus(name, StatusDestroying)
+}
+
 func (s *OrchState) MarkComponentDestroyed(name string) {
+	s.markComponentStatus(name, StatusDestroyed)
+}
+
+func (s *OrchState) markComponentStatus(name string, status Status) {
+	s.logger.Debug(
+		"component status transitioned",
+		logging.Field{Key: "name", Value: name},
+		logging.Field{Key: "status", Value: status},
+	)
 	now := time.Now().UTC().Format(time.RFC3339)
 	for i := range s.Components {
 		if s.Components[i].Name == name {
-			s.Components[i].Status = StatusDestroyed
+			s.Components[i].Status = status
 			s.Components[i].UpdatedAt = now
 			s.UpdatedAt = now
 			return
@@ -155,7 +228,7 @@ func (sm *Manager) Delete() error {
 
 func NewComponentState(
 	component *manifestcore.Component,
-	runnerType string,
+	runnerType runners.RunnerType,
 	outputs map[string]string,
 	data ComponentStateData,
 ) ComponentState {
