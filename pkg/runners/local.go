@@ -66,6 +66,11 @@ func (t *LocalRunner) Exec(ctx context.Context, req ExecCommand) (*ExecResult, e
 		}
 	}
 
+	// flush stdout to next line
+	if req.Stdout != nil {
+		_, _ = req.Stdout.Write([]byte("\n"))
+	}
+
 	return &ExecResult{
 		ExitCode: exitCode,
 		Duration: duration,

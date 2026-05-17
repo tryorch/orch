@@ -73,11 +73,11 @@ func (h Hooks) HasAny() bool {
 
 type ComponentSource struct {
 	// Embedded allows embedding raw string content directly in the manifest.
-	Embedded string `yaml:"embedded,omitempty"`
+	Embedded string `yaml:"embedded,omitempty" json:"embedded,omitempty"`
 	// Path specifies a directory path to load the component from.
-	Path string `yaml:"path,omitempty"`
+	Path string `yaml:"path,omitempty" json:"path,omitempty"`
 	// Files maps runner-side names to local files to load for the component.
-	Files map[string]string `yaml:"files,omitempty"`
+	Files map[string]string `yaml:"files,omitempty" json:"files,omitempty"`
 }
 
 func (c ComponentSource) Validate() (bool, error) {

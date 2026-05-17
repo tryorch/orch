@@ -195,7 +195,11 @@ func (s *OrchState) MarkComponentDestroyed(name string) {
 }
 
 func (s *OrchState) markComponentStatus(name string, status Status) {
-	s.logger.Debug(
+	logger := s.logger
+	if logger == nil {
+		logger = &logging.NoopDebugLogger{}
+	}
+	logger.Debug(
 		"component status transitioned",
 		logging.Field{Key: "name", Value: name},
 		logging.Field{Key: "status", Value: status},

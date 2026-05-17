@@ -42,5 +42,6 @@ bin/
 !README.md
 !md/lifecycle-hooks.md
 !md/apply-policy.md
+!md/open-source-readiness.md
 !md/script-component.md
 !md/state-backends.md

@@ -203,10 +203,6 @@ func RunUp(envID string, m *manifestcore.Manifest, logger logging.Logger, inputs
 		}
 
 		component.LoadedConfig = cfg
-		currentState.BeginComponentApply(component, runner.Type(), runnerWorkDir)
-		if err := stateManager.Save(currentState); err != nil {
-			return fmt.Errorf("failed to save applying state for component %q: %w", component.Name, err)
-		}
 
 		if err := runLifecycleHooks(ctx, runner, component.Hooks.PreApply, lifecyclePreApply, hookExecutionContext{
 			envID:        envID,
@@ -290,6 +286,6 @@ func RunUp(envID string, m *manifestcore.Manifest, logger logging.Logger, inputs
 		}
 	}
 
-	fmt.Printf("Sandbox created successfully\n")
+	fmt.Printf("Apply complete!\n")
 	return nil
 }

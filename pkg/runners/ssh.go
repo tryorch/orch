@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"sort"
 	"strings"
 	"time"
 
@@ -134,32 +135,9 @@ func (t *SSHRunner) Exec(ctx context.Context, req ExecCommand) (*ExecResult, err
 		session.Stderr = &stderr
 	}
 
-	// Combine command slice into single string safely
-	cmd := ""
-	for _, arg := range req.Command {
-		cmd += fmt.Sprintf("%q ", arg)
-	}
+	cmd := buildSSHCommand(t.env, req)
 
 	start := time.Now()
-	if req.Stdout != nil {
-		_, err = req.Stdout.Write([]byte(cmd + "\n"))
-		if err != nil {
-			return nil, fmt.Errorf("failed to write command to stdout: %w", err)
-		}
-	}
-
-	env := utils.MapToEnvSlice(t.env, req.Env)
-	for _, e := range env {
-		eParts := strings.Split(e, "=")
-		if len(eParts) != 2 {
-			continue
-		}
-		err := session.Setenv(eParts[0], eParts[1])
-		if err != nil {
-			return nil, err
-		}
-	}
-
 	err = session.Run(cmd)
 	duration := time.Since(start)
 
@@ -171,6 +149,11 @@ func (t *SSHRunner) Exec(ctx context.Context, req ExecCommand) (*ExecResult, err
 		}
 	}
 
+	// flush stdout to next line
+	if req.Stdout != nil {
+		_, _ = req.Stdout.Write([]byte("\n"))
+	}
+
 	return &ExecResult{
 		ExitCode: exitCode,
 		Duration: duration,
@@ -178,6 +161,54 @@ func (t *SSHRunner) Exec(ctx context.Context, req ExecCommand) (*ExecResult, err
 		Stdout:   stdout.Bytes(),
 		Stderr:   stderr.Bytes(),
 	}, nil
+}
+
+func buildSSHCommand(baseEnv map[string]string, req ExecCommand) string {
+	parts := make([]string, 0, len(req.Command))
+	for _, arg := range req.Command {
+		parts = append(parts, shellQuote(arg))
+	}
+	command := strings.Join(parts, " ")
+
+	env := mergeEnv(baseEnv, req.Env)
+	if len(env) > 0 {
+		keys := make([]string, 0, len(env))
+		for key := range env {
+			keys = append(keys, key)
+		}
+		sort.Strings(keys)
+
+		envParts := make([]string, 0, len(keys)+2)
+		envParts = append(envParts, "env")
+		for _, key := range keys {
+			envParts = append(envParts, shellQuote(key+"="+env[key]))
+		}
+		envParts = append(envParts, command)
+		command = strings.Join(envParts, " ")
+	}
+
+	if req.WorkingDir != "" {
+		command = "cd " + shellQuote(req.WorkingDir) + " && " + command
+	}
+
+	return command
+}
+
+func mergeEnv(envs ...map[string]string) map[string]string {
+	merged := make(map[string]string)
+	for _, env := range envs {
+		for key, value := range env {
+			merged[key] = value
+		}
+	}
+	return merged
+}
+
+func shellQuote(value string) string {
+	if value == "" {
+		return "''"
+	}
+	return "'" + strings.ReplaceAll(value, "'", `'\''`) + "'"
 }
 
 func (t *SSHRunner) CopyFile(ctx context.Context, req FileCopyRequest) (*FileCopyResult, error) {

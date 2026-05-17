@@ -33,10 +33,10 @@ func (r *TTYRenderer) Render(e Event) {
 	}
 	fmt.Println(line)
 	if e.Type == EventFailure && e.Err != nil {
-		fmt.Printf("    %v\n", strings.Replace(e.Err.Error(), "\n", "\n    ", -1))
+		fmt.Printf("    %v\n\n", strings.Replace(e.Err.Error(), "\n", "\n    ", -1))
 	}
 	if e.Type == EventWarning && e.Hint != "" {
-		fmt.Printf("    Hint: %v\n", strings.Replace(e.Hint, "\n", "\n          ", -1))
+		fmt.Printf("    Hint: %v\n\n", strings.Replace(e.Hint, "\n", "\n          ", -1))
 	}
 }
 
