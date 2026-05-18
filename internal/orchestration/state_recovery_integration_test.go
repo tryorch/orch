@@ -131,6 +131,54 @@ func TestRunUpSkipsAppliedAndReappliesWithOption(t *testing.T) {
 	assertLineCount(t, countFile, 2)
 }
 
+func TestRunUpSensitiveOutputFeedsSameRunButIsNotPersisted(t *testing.T) {
+	stateRoot := t.TempDir()
+	workRoot := t.TempDir()
+	envID := "sensitive-output"
+
+	manifest := testManifest(stateRoot,
+		manifestcore.Component{
+			Name:    "producer",
+			Type:    "script",
+			Runner:  "local",
+			WorkDir: workRoot,
+			Source: manifestcore.ComponentSource{
+				Embedded: `echo "token=abc" >> "$ORCH_OUTPUT_ENV"` + "\n",
+			},
+			Outputs: []manifestcore.Output{
+				{Name: "token", Sensitive: true},
+			},
+		},
+		manifestcore.Component{
+			Name:      "consumer",
+			Type:      "script",
+			Runner:    "local",
+			DependsOn: []string{"producer"},
+			WorkDir:   workRoot,
+			Source: manifestcore.ComponentSource{
+				Embedded: `test "$TOKEN_FROM_PRODUCER" = "abc"` + "\n",
+			},
+			Env: map[string]string{
+				"TOKEN_FROM_PRODUCER": "${producer.outputs.token}",
+			},
+		},
+	)
+
+	if err := RunUp(envID, manifest, testLogger{}, nil); err != nil {
+		t.Fatalf("up failed: %v", err)
+	}
+
+	producerState := loadComponentState(t, stateRoot, envID, "producer")
+	if _, ok := producerState.Outputs["token"]; ok {
+		t.Fatal("expected sensitive producer output to be absent from persisted state")
+	}
+
+	consumerState := loadComponentState(t, stateRoot, envID, "consumer")
+	if consumerState.Status != state.StatusApplied {
+		t.Fatalf("consumer status = %q, want %q", consumerState.Status, state.StatusApplied)
+	}
+}
+
 func TestRunUpBlocksOnFailedDestroyStage(t *testing.T) {
 	stateRoot := t.TempDir()
 	workRoot := t.TempDir()
