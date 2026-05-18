@@ -7,24 +7,32 @@ import (
 	"fmt"
 	"io"
 	"os"
+	"path/filepath"
 	"sort"
 	"strings"
 	"time"
 
 	"github.com/pkg/sftp"
 	"golang.org/x/crypto/ssh"
+	"golang.org/x/crypto/ssh/knownhosts"
 	"orch.io/pkg/utils"
 )
 
 type SSHRunnerConfig struct {
-	Host string `yaml:"host"`
-	Port int    `yaml:"port"`
-	User string `yaml:"user"`
+	Host string `yaml:"host" mapstructure:"host"`
+	Port int    `yaml:"port" mapstructure:"port"`
+	User string `yaml:"user" mapstructure:"user"`
 	Auth struct {
-		Method   string `yaml:"method"`
-		Password string `yaml:"password,omitempty"`
-		KeyPath  string `yaml:"key_path,omitempty"`
-	} `yaml:"auth"`
+		Method   string `yaml:"method" mapstructure:"method"`
+		Password string `yaml:"password,omitempty" mapstructure:"password"`
+		KeyPath  string `yaml:"key_path,omitempty" mapstructure:"key_path"`
+	} `yaml:"auth" mapstructure:"auth"`
+	HostKey SSHHostKeyConfig `yaml:"host_key" mapstructure:"host_key"`
+}
+
+type SSHHostKeyConfig struct {
+	KnownHosts string `yaml:"known_hosts,omitempty" mapstructure:"known_hosts"`
+	Insecure   bool   `yaml:"insecure,omitempty" mapstructure:"insecure"`
 }
 
 type SSHRunner struct {
@@ -85,11 +93,16 @@ func (t *SSHRunner) ValidateAndInitialize() error {
 		return fmt.Errorf("unsupported auth method: %s", t.config.Auth.Method)
 	}
 
+	hostKeyCallback, err := t.hostKeyCallback()
+	if err != nil {
+		return err
+	}
+
 	addr := fmt.Sprintf("%s:%d", t.config.Host, t.config.Port)
 	config := &ssh.ClientConfig{
 		User:            t.config.User,
 		Auth:            auth,
-		HostKeyCallback: ssh.InsecureIgnoreHostKey(), // todo: replace with proper verification
+		HostKeyCallback: hostKeyCallback,
 		Timeout:         10 * time.Second,
 	}
 
@@ -100,6 +113,52 @@ func (t *SSHRunner) ValidateAndInitialize() error {
 	t.client = client
 
 	return nil
+}
+
+func (t *SSHRunner) hostKeyCallback() (ssh.HostKeyCallback, error) {
+	cfg := t.config.HostKey
+	methods := 0
+	if cfg.KnownHosts != "" {
+		methods++
+	}
+	if cfg.Insecure {
+		methods++
+	}
+
+	if methods == 0 {
+		return nil, errors.New("ssh host_key is required; configure host_key.known_hosts or host_key.insecure")
+	}
+	if methods > 1 {
+		return nil, errors.New("ssh host_key must set exactly one verification method")
+	}
+
+	if cfg.Insecure {
+		return ssh.InsecureIgnoreHostKey(), nil
+	}
+
+	knownHostsPath, err := expandUserPath(cfg.KnownHosts)
+	if err != nil {
+		return nil, err
+	}
+	callback, err := knownhosts.New(knownHostsPath)
+	if err != nil {
+		return nil, fmt.Errorf("failed to load known_hosts file %q: %w", cfg.KnownHosts, err)
+	}
+	return callback, nil
+}
+
+func expandUserPath(path string) (string, error) {
+	if path == "" || path == "~" || strings.HasPrefix(path, "~/") {
+		home, err := os.UserHomeDir()
+		if err != nil {
+			return "", fmt.Errorf("failed to resolve home directory: %w", err)
+		}
+		if path == "" || path == "~" {
+			return home, nil
+		}
+		return filepath.Join(home, strings.TrimPrefix(path, "~/")), nil
+	}
+	return path, nil
 }
 
 func (t *SSHRunner) Exec(ctx context.Context, req ExecCommand) (*ExecResult, error) {
