@@ -57,6 +57,7 @@ func (t *LocalRunner) Exec(ctx context.Context, req ExecCommand) (*ExecResult, e
 	start := time.Now()
 	err := cmd.Run()
 	duration := time.Since(start)
+	ensureExecWriterLineEnds(req.Stdout, req.Stderr)
 
 	exitCode := 0
 	if err != nil {
@@ -64,11 +65,6 @@ func (t *LocalRunner) Exec(ctx context.Context, req ExecCommand) (*ExecResult, e
 		if errors.As(err, &exitErr) {
 			exitCode = exitErr.ExitCode()
 		}
-	}
-
-	// flush stdout to next line
-	if req.Stdout != nil {
-		_, _ = req.Stdout.Write([]byte("\n"))
 	}
 
 	return &ExecResult{

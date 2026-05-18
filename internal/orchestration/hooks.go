@@ -4,7 +4,9 @@ import (
 	"context"
 	"fmt"
 	"os"
+	"time"
 
+	"orch.io/pkg/events"
 	manifestcore "orch.io/pkg/manifest/core"
 	"orch.io/pkg/runners"
 	"orch.io/pkg/utils"
@@ -28,6 +30,7 @@ type hookExecutionContext struct {
 	workDir      string
 	baseEnv      map[string]string
 	resolver     varresolvers.Resolver
+	emitter      events.Emitter
 }
 
 func runLifecycleHooks(ctx context.Context, t runners.Runner, hooks []manifestcore.Hook, phase lifecycleHookPhase, hookCtx hookExecutionContext) error {
@@ -48,14 +51,17 @@ func runLifecycleHooks(ctx context.Context, t runners.Runner, hooks []manifestco
 		if hook.Command == "" {
 			return fmt.Errorf("%s hook %d for component %q has an empty command", phase, i+1, hookCtx.component)
 		}
+		emitHookEvent(hookCtx, events.EventStart, phase, i+1, "hook started", nil, 0)
 
 		command, err := varresolvers.InterpolateString(ctx, hook.Command, hookCtx.resolver)
 		if err != nil {
+			emitHookEvent(hookCtx, events.EventFailure, phase, i+1, "hook interpolation failed", err, 0)
 			return fmt.Errorf("failed to interpolate %s hook %d for component %q: %w", phase, i+1, hookCtx.component, err)
 		}
 
 		env, err := lifecycleHookEnv(ctx, hookCtx, phase, hook.Env)
 		if err != nil {
+			emitHookEvent(hookCtx, events.EventFailure, phase, i+1, "hook env interpolation failed", err, 0)
 			return fmt.Errorf("failed to interpolate env for %s hook %d on component %q: %w", phase, i+1, hookCtx.component, err)
 		}
 
@@ -64,18 +70,41 @@ func runLifecycleHooks(ctx context.Context, t runners.Runner, hooks []manifestco
 			Command:    utils.ShellCommand(hook.Shell, command),
 			Env:        env,
 			Timeout:    0,
-			Stderr:     utils.NewPrefixWriter(os.Stderr, utils.RunnerComponentPrefix(hookCtx.runner, hookCtx.component)),
-			Stdout:     utils.NewPrefixWriter(os.Stdout, utils.RunnerComponentPrefix(hookCtx.runner, hookCtx.component)),
+			Stderr:     utils.NewPrefixWriter(os.Stderr, utils.RunnerComponentPrefix(hookCtx.runner, fmt.Sprintf("%s.%s", hookCtx.component, phase))),
+			Stdout:     utils.NewPrefixWriter(os.Stdout, utils.RunnerComponentPrefix(hookCtx.runner, fmt.Sprintf("%s.%s", hookCtx.component, phase))),
 		})
 		if err != nil {
+			emitHookEvent(hookCtx, events.EventFailure, phase, i+1, "hook failed", err, 0)
 			return fmt.Errorf("failed to execute %s hook %d for component %q: %w", phase, i+1, hookCtx.component, err)
 		}
 		if res.Error != nil || res.ExitCode != 0 {
+			hookErr := res.Error
+			if hookErr == nil {
+				hookErr = fmt.Errorf("exit code %d", res.ExitCode)
+			}
+			emitHookEvent(hookCtx, events.EventFailure, phase, i+1, "hook failed", hookErr, res.Duration)
 			return fmt.Errorf("%s hook %d for component %q failed with exit code %d: %v", phase, i+1, hookCtx.component, res.ExitCode, res.Error)
 		}
+		emitHookEvent(hookCtx, events.EventSuccess, phase, i+1, "hook completed", nil, res.Duration)
 	}
 
 	return nil
+}
+
+func emitHookEvent(hookCtx hookExecutionContext, eventType events.Type, phase lifecycleHookPhase, index int, message string, err error, duration time.Duration) {
+	if hookCtx.emitter == nil {
+		return
+	}
+	hookCtx.emitter.Emit(events.Event{
+		Type:      eventType,
+		Component: hookCtx.component,
+		Adapter:   "hook",
+		Runner:    hookCtx.runner,
+		Stage:     string(phase),
+		Message:   fmt.Sprintf("%s %d %s", phase, index, message),
+		Err:       err,
+		Duration:  duration,
+	})
 }
 
 func ensureLifecycleHookWorkDir(ctx context.Context, t runners.Runner, hookCtx hookExecutionContext) error {

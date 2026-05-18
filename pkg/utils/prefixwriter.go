@@ -56,3 +56,18 @@ func (pw *PrefixWriter) Write(p []byte) (int, error) {
 	}
 	return total, nil
 }
+
+func (pw *PrefixWriter) EnsureLineEnd() error {
+	pw.mu.Lock()
+	defer pw.mu.Unlock()
+
+	if pw.atLineStart {
+		return nil
+	}
+	_, err := pw.w.Write([]byte("\n"))
+	if err != nil {
+		return err
+	}
+	pw.atLineStart = true
+	return nil
+}

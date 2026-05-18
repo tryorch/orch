@@ -22,6 +22,29 @@ const (
 	StatusDestroyed  Status = "destroyed"
 )
 
+type Stage string
+
+const (
+	StageConfig      Stage = "config"
+	StagePreApply    Stage = "pre_apply"
+	StageApply       Stage = "apply"
+	StageOutputs     Stage = "outputs"
+	StageArtifacts   Stage = "artifacts"
+	StagePostApply   Stage = "post_apply"
+	StagePreDestroy  Stage = "pre_destroy"
+	StageDestroy     Stage = "destroy"
+	StagePostDestroy Stage = "post_destroy"
+)
+
+func (s Stage) IsDestroyStage() bool {
+	switch s {
+	case StagePreDestroy, StageDestroy, StagePostDestroy:
+		return true
+	default:
+		return false
+	}
+}
+
 // RunnerRef identifies the execution context without persisting credentials.
 type RunnerRef struct {
 	Name string             `json:"name"`
@@ -53,6 +76,7 @@ type ComponentState struct {
 	Payload            map[string]interface{}       `json:"payload,omitempty"`
 	Artifacts          []Artifact                   `json:"artifacts,omitempty"`
 	Status             Status                       `json:"status"`
+	Stage              Stage                        `json:"stage,omitempty"`
 	ProvisionedAt      string                       `json:"provisioned_at"`
 	UpdatedAt          string                       `json:"updated_at"`
 }
@@ -143,7 +167,7 @@ func (s *OrchState) FindComponent(name string) (ComponentState, bool) {
 	return ComponentState{}, false
 }
 
-func (s *OrchState) BeginComponentApply(component *manifestcore.Component, runnerType runners.RunnerType, workDir string) {
+func (s *OrchState) BeginComponentApply(component *manifestcore.Component, runnerType runners.RunnerType, workDir string, stage Stage) {
 	now := time.Now().UTC().Format(time.RFC3339)
 	for i := range s.Components {
 		if s.Components[i].Name == component.Name {
@@ -156,6 +180,7 @@ func (s *OrchState) BeginComponentApply(component *manifestcore.Component, runne
 			s.Components[i].WorkDir = workDir
 			s.Components[i].NonSensitiveConfig = SanitizeMap(component.Config)
 			s.Components[i].Status = StatusApplying
+			s.Components[i].Stage = stage
 			s.Components[i].UpdatedAt = now
 			s.UpdatedAt = now
 			return
@@ -176,25 +201,34 @@ func (s *OrchState) BeginComponentApply(component *manifestcore.Component, runne
 		Outputs:            make(map[string]string),
 		Payload:            make(map[string]interface{}),
 		Status:             StatusApplying,
+		Stage:              stage,
 		ProvisionedAt:      now,
 		UpdatedAt:          now,
 	})
 	s.UpdatedAt = now
 }
 
-func (s *OrchState) MarkComponentFailed(name string) {
-	s.markComponentStatus(name, StatusFailed)
+func (s *OrchState) MarkComponentFailed(name string, stage Stage) {
+	s.markComponentStatus(name, StatusFailed, stage)
 }
 
-func (s *OrchState) MarkComponentDestroying(name string) {
-	s.markComponentStatus(name, StatusDestroying)
+func (s *OrchState) MarkComponentApplying(name string, stage Stage) {
+	s.markComponentStatus(name, StatusApplying, stage)
 }
 
-func (s *OrchState) MarkComponentDestroyed(name string) {
-	s.markComponentStatus(name, StatusDestroyed)
+func (s *OrchState) MarkComponentApplied(name string, stage Stage) {
+	s.markComponentStatus(name, StatusApplied, stage)
 }
 
-func (s *OrchState) markComponentStatus(name string, status Status) {
+func (s *OrchState) MarkComponentDestroying(name string, stage Stage) {
+	s.markComponentStatus(name, StatusDestroying, stage)
+}
+
+func (s *OrchState) MarkComponentDestroyed(name string, stage Stage) {
+	s.markComponentStatus(name, StatusDestroyed, stage)
+}
+
+func (s *OrchState) markComponentStatus(name string, status Status, stage Stage) {
 	logger := s.logger
 	if logger == nil {
 		logger = &logging.NoopDebugLogger{}
@@ -203,11 +237,13 @@ func (s *OrchState) markComponentStatus(name string, status Status) {
 		"component status transitioned",
 		logging.Field{Key: "name", Value: name},
 		logging.Field{Key: "status", Value: status},
+		logging.Field{Key: "stage", Value: stage},
 	)
 	now := time.Now().UTC().Format(time.RFC3339)
 	for i := range s.Components {
 		if s.Components[i].Name == name {
 			s.Components[i].Status = status
+			s.Components[i].Stage = stage
 			s.Components[i].UpdatedAt = now
 			s.UpdatedAt = now
 			return
@@ -250,6 +286,7 @@ func NewComponentState(
 		Payload:            data.Payload,
 		Artifacts:          data.Artifacts,
 		Status:             StatusApplied,
+		Stage:              StagePostApply,
 	}
 }
 

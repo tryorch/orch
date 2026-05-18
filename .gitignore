@@ -45,3 +45,4 @@ bin/
 !md/open-source-readiness.md
 !md/script-component.md
 !md/state-backends.md
+!md/state-recovery.md

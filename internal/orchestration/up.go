@@ -21,7 +21,22 @@ type job struct {
 	a *adapters.Adapter
 }
 
+type UpOptions struct {
+	Reapply bool
+}
+
+type existingComponentAction string
+
+const (
+	existingComponentApply existingComponentAction = "apply"
+	existingComponentSkip  existingComponentAction = "skip"
+)
+
 func RunUp(envID string, m *manifestcore.Manifest, logger logging.Logger, inputs map[string]string) error {
+	return RunUpWithOptions(envID, m, logger, inputs, UpOptions{})
+}
+
+func RunUpWithOptions(envID string, m *manifestcore.Manifest, logger logging.Logger, inputs map[string]string, options UpOptions) error {
 	componentResolver := varresolvers.NewComponentResolver()
 	inputsResolver, err := varresolvers.NewInputsResolver(inputs, m.Inputs)
 	if err != nil {
@@ -128,8 +143,20 @@ func RunUp(envID string, m *manifestcore.Manifest, logger logging.Logger, inputs
 		runner := *j.r
 
 		if componentState, ok := currentState.FindComponent(component.Name); ok {
-			switch componentState.Status {
-			case state.StatusApplied:
+			action, err := upActionForExistingComponent(componentState, options)
+			if err != nil {
+				return err
+			}
+			if componentState.Status == state.StatusApplied && action == existingComponentApply {
+				emitter.Emit(events.Event{
+					Type:      events.EventInfo,
+					Message:   "component already applied; reapplying",
+					Adapter:   component.Type,
+					Runner:    component.Runner,
+					Component: component.Name,
+				})
+			}
+			if action == existingComponentSkip {
 				componentResolver.RegisterPersistedComponentOutput(component.Name, componentState.Outputs)
 				componentResolver.RegisterUnavailableSensitiveOutputs(component.Name, component.Outputs, componentState.Outputs)
 				emitter.Emit(events.Event{
@@ -140,6 +167,8 @@ func RunUp(envID string, m *manifestcore.Manifest, logger logging.Logger, inputs
 					Component: component.Name,
 				})
 				continue
+			}
+			switch componentState.Status {
 			case state.StatusApplying:
 				emitter.Emit(events.Event{
 					Type:      events.EventWarning,
@@ -156,8 +185,6 @@ func RunUp(envID string, m *manifestcore.Manifest, logger logging.Logger, inputs
 					Runner:    component.Runner,
 					Component: component.Name,
 				})
-			case state.StatusDestroying:
-				return fmt.Errorf("component %q was destroying in a previous run; run down again to finish cleanup before applying", component.Name)
 			}
 		}
 
@@ -170,14 +197,14 @@ func RunUp(envID string, m *manifestcore.Manifest, logger logging.Logger, inputs
 		})
 
 		runnerWorkDir := adapterCtx.BuildRunnerWorkDir(component.WorkDir, component.Name)
-		currentState.BeginComponentApply(component, runner.Type(), runnerWorkDir)
+		currentState.BeginComponentApply(component, runner.Type(), runnerWorkDir, state.StageConfig)
 		if err = stateManager.Save(currentState); err != nil {
 			return fmt.Errorf("component initial status registration failed: %w", err)
 		}
 
 		resolvedConfig, err := varresolvers.DeepInterpolate(ctx, component.Config, resolvers)
 		if err != nil {
-			currentState.MarkComponentFailed(component.Name)
+			currentState.MarkComponentFailed(component.Name, state.StageConfig)
 			_ = stateManager.Save(currentState)
 			return fmt.Errorf("component %q config interpolation failed: %w", component.Name, err)
 		}
@@ -185,7 +212,7 @@ func RunUp(envID string, m *manifestcore.Manifest, logger logging.Logger, inputs
 
 		resolvedEnv, err := interpolateEnv(ctx, component.Env, resolvers)
 		if err != nil {
-			currentState.MarkComponentFailed(component.Name)
+			currentState.MarkComponentFailed(component.Name, state.StageConfig)
 			_ = stateManager.Save(currentState)
 			return fmt.Errorf("component %q env interpolation failed: %w", component.Name, err)
 		}
@@ -193,7 +220,7 @@ func RunUp(envID string, m *manifestcore.Manifest, logger logging.Logger, inputs
 
 		cfg, warnings, err := adapter.ValidateAndLoadConfig(ctx, component)
 		if err != nil {
-			currentState.MarkComponentFailed(component.Name)
+			currentState.MarkComponentFailed(component.Name, state.StageConfig)
 			_ = stateManager.Save(currentState)
 			return fmt.Errorf("component \"%s\" config validation failed: %w", component.Name, err)
 		}
@@ -203,6 +230,10 @@ func RunUp(envID string, m *manifestcore.Manifest, logger logging.Logger, inputs
 		}
 
 		component.LoadedConfig = cfg
+		currentState.MarkComponentApplying(component.Name, state.StagePreApply)
+		if err := stateManager.Save(currentState); err != nil {
+			return fmt.Errorf("failed to save pre_apply state for component %q: %w", component.Name, err)
+		}
 
 		if err := runLifecycleHooks(ctx, runner, component.Hooks.PreApply, lifecyclePreApply, hookExecutionContext{
 			envID:        envID,
@@ -212,17 +243,23 @@ func RunUp(envID string, m *manifestcore.Manifest, logger logging.Logger, inputs
 			workDir:      runnerWorkDir,
 			baseEnv:      component.Env,
 			resolver:     resolvers,
+			emitter:      emitter,
 		}); err != nil {
-			currentState.MarkComponentFailed(component.Name)
+			currentState.MarkComponentFailed(component.Name, state.StagePreApply)
 			if saveErr := stateManager.Save(currentState); saveErr != nil {
 				return fmt.Errorf("component %q pre_apply hook failed: %w (also failed to save failed state: %v)", component.Name, err, saveErr)
 			}
 			return fmt.Errorf("component %q pre_apply hook failed: %w", component.Name, err)
 		}
 
+		currentState.MarkComponentApplying(component.Name, state.StageApply)
+		if err := stateManager.Save(currentState); err != nil {
+			return fmt.Errorf("failed to save apply state for component %q: %w", component.Name, err)
+		}
+
 		applyResult, err := adapter.Apply(ctx, component, runner)
 		if err != nil {
-			currentState.MarkComponentFailed(component.Name)
+			currentState.MarkComponentFailed(component.Name, state.StageApply)
 			if saveErr := stateManager.Save(currentState); saveErr != nil {
 				return fmt.Errorf("component %q failed to apply: %w (also failed to save failed state: %v)", component.Name, err, saveErr)
 			}
@@ -237,10 +274,25 @@ func RunUp(envID string, m *manifestcore.Manifest, logger logging.Logger, inputs
 
 			return fmt.Errorf("component \"%s\" failed to apply", component.Name)
 		}
+
+		currentState.MarkComponentApplying(component.Name, state.StageOutputs)
+		if err := stateManager.Save(currentState); err != nil {
+			return fmt.Errorf("failed to save output validation state for component %q: %w", component.Name, err)
+		}
 		if err := validateApplyOutputs(component, applyResult.Outputs, emitter); err != nil {
 			failedState := state.NewComponentState(component, runner.Type(), map[string]string{}, applyResult.State)
 			failedState.Status = state.StatusFailed
+			failedState.Stage = state.StageOutputs
 			currentState.UpsertComponent(failedState)
+			emitter.Emit(events.Event{
+				Type:      events.EventFailure,
+				Message:   "output validation failed",
+				Adapter:   component.Type,
+				Runner:    component.Runner,
+				Component: component.Name,
+				Stage:     string(state.StageOutputs),
+				Err:       err,
+			})
 			if artifactErr := stateManager.CaptureArtifacts(ctx, failedState, runner); artifactErr != nil {
 				if saveErr := stateManager.Save(currentState); saveErr != nil {
 					return fmt.Errorf("component %q output validation failed: %w (also failed to capture artifacts: %v and failed to save failed state: %v)", component.Name, err, artifactErr, saveErr)
@@ -258,15 +310,34 @@ func RunUp(envID string, m *manifestcore.Manifest, logger logging.Logger, inputs
 
 		componentState := state.NewComponentState(component, runner.Type(), stateOutputs, applyResult.State)
 		currentState.UpsertComponent(componentState)
+		currentState.MarkComponentApplying(component.Name, state.StageArtifacts)
+		if err := stateManager.Save(currentState); err != nil {
+			return fmt.Errorf("failed to save artifact capture state for component %q: %w", component.Name, err)
+		}
 		if err := stateManager.CaptureArtifacts(ctx, componentState, runner); err != nil {
-			currentState.MarkComponentFailed(component.Name)
+			currentState.MarkComponentFailed(component.Name, state.StageArtifacts)
+			emitter.Emit(events.Event{
+				Type:      events.EventFailure,
+				Message:   "artifact capture failed",
+				Adapter:   component.Type,
+				Runner:    component.Runner,
+				Component: component.Name,
+				Stage:     string(state.StageArtifacts),
+				Err:       err,
+			})
 			if saveErr := stateManager.Save(currentState); saveErr != nil {
 				return fmt.Errorf("failed to capture state artifacts for component %q: %w (also failed to save failed state: %v)", component.Name, err, saveErr)
 			}
 			return fmt.Errorf("failed to capture state artifacts for component %q: %w", component.Name, err)
 		}
+		currentState.MarkComponentApplied(component.Name, state.StageArtifacts)
 		if err := stateManager.Save(currentState); err != nil {
 			return fmt.Errorf("failed to save state for component %q: %w", component.Name, err)
+		}
+
+		currentState.MarkComponentApplying(component.Name, state.StagePostApply)
+		if err := stateManager.Save(currentState); err != nil {
+			return fmt.Errorf("failed to save post_apply state for component %q: %w", component.Name, err)
 		}
 
 		if err := runLifecycleHooks(ctx, runner, component.Hooks.PostApply, lifecyclePostApply, hookExecutionContext{
@@ -277,15 +348,20 @@ func RunUp(envID string, m *manifestcore.Manifest, logger logging.Logger, inputs
 			workDir:      applyResult.State.WorkDir,
 			baseEnv:      component.Env,
 			resolver:     resolvers,
+			emitter:      emitter,
 		}); err != nil {
-			currentState.MarkComponentFailed(component.Name)
+			currentState.MarkComponentFailed(component.Name, state.StagePostApply)
 			if saveErr := stateManager.Save(currentState); saveErr != nil {
 				return fmt.Errorf("component %q post_apply hook failed: %w (also failed to save failed state: %v)", component.Name, err, saveErr)
 			}
 			return fmt.Errorf("component %q post_apply hook failed: %w", component.Name, err)
 		}
+		currentState.MarkComponentApplied(component.Name, state.StagePostApply)
+		if err := stateManager.Save(currentState); err != nil {
+			return fmt.Errorf("failed to save post_apply completion state for component %q: %w", component.Name, err)
+		}
 	}
 
-	fmt.Printf("Apply complete!\n")
+	fmt.Printf("---------\nApply complete!\n")
 	return nil
 }

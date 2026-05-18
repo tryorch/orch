@@ -98,6 +98,10 @@ func RunDown(envID string, m *manifestcore.Manifest, logger logging.Logger) erro
 		}
 
 		if component, ok := componentsByName[componentState.Name]; ok {
+			currentState.MarkComponentDestroying(componentState.Name, state.StagePreDestroy)
+			if err := stateManager.Save(currentState); err != nil {
+				return fmt.Errorf("failed to save pre_destroy state for component %q: %w", componentState.Name, err)
+			}
 			if err := runLifecycleHooks(ctx, t, component.Hooks.PreDestroy, lifecyclePreDestroy, hookExecutionContext{
 				envID:        envID,
 				componentRef: component,
@@ -106,26 +110,48 @@ func RunDown(envID string, m *manifestcore.Manifest, logger logging.Logger) erro
 				workDir:      componentState.WorkDir,
 				baseEnv:      component.Env,
 				resolver:     resolvers,
+				emitter:      emitter,
 			}); err != nil {
+				currentState.MarkComponentFailed(componentState.Name, state.StagePreDestroy)
+				if saveErr := stateManager.Save(currentState); saveErr != nil {
+					return fmt.Errorf("component %q pre_destroy hook failed: %w (also failed to save failed state: %v)", componentState.Name, err, saveErr)
+				}
 				return fmt.Errorf("component %q pre_destroy hook failed: %w", componentState.Name, err)
 			}
 		}
 
-		currentState.MarkComponentDestroying(componentState.Name)
+		currentState.MarkComponentDestroying(componentState.Name, state.StageDestroy)
 		if err := stateManager.Save(currentState); err != nil {
 			return fmt.Errorf("failed to save destroying state for component %q: %w", componentState.Name, err)
 		}
 
 		if err := adapter.DestroyFromState(ctx, componentState, t); err != nil {
+			currentState.MarkComponentFailed(componentState.Name, state.StageDestroy)
+			emitter.Emit(events.Event{
+				Type:      events.EventFailure,
+				Message:   "destroy failed",
+				Adapter:   componentState.Type,
+				Runner:    componentState.Runner.Name,
+				Component: componentState.Name,
+				Stage:     string(state.StageDestroy),
+				Err:       err,
+			})
+			if saveErr := stateManager.Save(currentState); saveErr != nil {
+				return fmt.Errorf("component %s destroy failed: %w (also failed to save failed state: %v)", componentState.Name, err, saveErr)
+			}
 			return fmt.Errorf("component %s destroy failed: %w", componentState.Name, err)
 		}
 
-		currentState.MarkComponentDestroyed(componentState.Name)
+		currentState.MarkComponentDestroyed(componentState.Name, state.StageDestroy)
 		if err := stateManager.Save(currentState); err != nil {
 			return fmt.Errorf("failed to save state after destroying component %q: %w", componentState.Name, err)
 		}
 
 		if component, ok := componentsByName[componentState.Name]; ok {
+			currentState.MarkComponentDestroying(componentState.Name, state.StagePostDestroy)
+			if err := stateManager.Save(currentState); err != nil {
+				return fmt.Errorf("failed to save post_destroy state for component %q: %w", componentState.Name, err)
+			}
 			if err := runLifecycleHooks(ctx, t, component.Hooks.PostDestroy, lifecyclePostDestroy, hookExecutionContext{
 				envID:        envID,
 				componentRef: component,
@@ -134,8 +160,17 @@ func RunDown(envID string, m *manifestcore.Manifest, logger logging.Logger) erro
 				workDir:      componentState.WorkDir,
 				baseEnv:      component.Env,
 				resolver:     resolvers,
+				emitter:      emitter,
 			}); err != nil {
+				currentState.MarkComponentFailed(componentState.Name, state.StagePostDestroy)
+				if saveErr := stateManager.Save(currentState); saveErr != nil {
+					return fmt.Errorf("component %q post_destroy hook failed: %w (also failed to save failed state: %v)", componentState.Name, err, saveErr)
+				}
 				return fmt.Errorf("component %q post_destroy hook failed: %w", componentState.Name, err)
+			}
+			currentState.MarkComponentDestroyed(componentState.Name, state.StagePostDestroy)
+			if err := stateManager.Save(currentState); err != nil {
+				return fmt.Errorf("failed to save post_destroy completion state for component %q: %w", componentState.Name, err)
 			}
 		}
 	}

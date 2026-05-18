@@ -17,6 +17,7 @@ type Event struct {
 	Component string
 	Adapter   string
 	Runner    string
+	Stage     string
 
 	Message  string
 	Hint     string

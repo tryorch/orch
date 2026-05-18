@@ -10,12 +10,15 @@ For each component in dependency order:
 
 - missing from state: apply it
 - `destroyed`: apply it again
-- `failed`: retry it
+- `failed` in an apply-side stage: retry it
+- `failed` in a destroy-side stage: block and ask the user to run `down`
 - `applying`: warn and retry it
 - `destroying`: stop and ask the user to run `down` again first
-- `applied`: skip it and rehydrate its persisted outputs for downstream interpolation
+- `applied`: skip it and rehydrate its persisted outputs for downstream interpolation, unless `--reapply` is set
 
 Skipping an already applied component is the default because not every adapter is naturally idempotent. Docker Compose, Terraform, and CloudFormation can usually converge safely, but the script adapter can perform arbitrary side effects. Until Orch has fingerprinting and explicit reapply policies, the conservative behavior is to avoid rerunning live components.
+
+`orch up --reapply` disables this skip behavior globally. It runs the normal apply flow again for already-applied components, including hooks, adapter apply, output validation, artifact capture, and final state save.
 
 ## State write points
 
@@ -37,7 +40,7 @@ save state
 run post_apply hooks
 ```
 
-If a pre-apply hook, adapter apply, output validation, artifact capture, or post-apply hook fails, Orch marks the component as `failed` and saves state. When the adapter returned destroyable state before the failure, Orch preserves that state so `orch down` can still attempt cleanup.
+If a pre-apply hook, adapter apply, output validation, artifact capture, or post-apply hook fails, Orch marks the component as `failed`, records the lifecycle `stage`, and saves state. When the adapter returned destroyable state before the failure, Orch preserves that state so `orch down` can still attempt cleanup.
 
 Current `down` write points:
 

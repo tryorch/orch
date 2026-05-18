@@ -23,6 +23,8 @@ func main() {
 	var paramsFile string
 	var isDebug bool
 	var envID string
+	var reapply bool
+	var stateInspectOutput string
 
 	rootCmd := &cobra.Command{
 		Use:           "orch",
@@ -67,10 +69,12 @@ func main() {
 				return err
 			}
 
-			return orchestration.RunUp(envID, m, logger.With(
+			return orchestration.RunUpWithOptions(envID, m, logger.With(
 				logging.Field{Key: "command", Value: "up"},
 				logging.Field{Key: "manifest", Value: manifestPath},
-			), params.Merge())
+			), params.Merge(), orchestration.UpOptions{
+				Reapply: reapply,
+			})
 		},
 	}
 
@@ -78,6 +82,7 @@ func main() {
 	upCmd.PersistentFlags().StringArrayVar(&cliParams, "param", []string{}, "Secret in key=value format (repeatable)")
 	upCmd.PersistentFlags().StringVar(&paramsFile, "params-file", "", "Path to YAML or env params file")
 	upCmd.PersistentFlags().StringVarP(&envID, "env-id", "e", "", "Environment ID")
+	upCmd.PersistentFlags().BoolVar(&reapply, "reapply", false, "Re-run apply for components already marked applied")
 	_ = upCmd.MarkPersistentFlagRequired("env-id")
 
 	downCmd := &cobra.Command{
@@ -102,6 +107,39 @@ func main() {
 	downCmd.PersistentFlags().StringVarP(&envID, "env-id", "e", "", "Environment ID")
 	_ = downCmd.MarkPersistentFlagRequired("env-id")
 
+	stateCmd := &cobra.Command{
+		Use:   "state",
+		Short: "Inspect and manage Orch state",
+	}
+
+	stateInspectCmd := &cobra.Command{
+		Use:   "inspect",
+		Short: "Inspect persisted state for an environment",
+		RunE: func(cmd *cobra.Command, args []string) error {
+			if err := utils.ValidateEnvID(envID); err != nil {
+				return fmt.Errorf("invalid env-id: %w", err)
+			}
+
+			m, err := manifest.Load(manifestPath, logger)
+			if err != nil {
+				return err
+			}
+
+			return orchestration.RunStateInspect(envID, m, logger.With(
+				logging.Field{Key: "command", Value: "state inspect"},
+				logging.Field{Key: "manifest", Value: manifestPath},
+			), orchestration.StateInspectOptions{
+				Output: stateInspectOutput,
+				Writer: os.Stdout,
+			})
+		},
+	}
+	stateInspectCmd.PersistentFlags().StringVarP(&manifestPath, "file", "f", "orch.yaml", "Path to manifest")
+	stateInspectCmd.PersistentFlags().StringVarP(&envID, "env-id", "e", "", "Environment ID")
+	stateInspectCmd.PersistentFlags().StringVarP(&stateInspectOutput, "output", "o", "table", "Output format: table or json")
+	_ = stateInspectCmd.MarkPersistentFlagRequired("env-id")
+	stateCmd.AddCommand(stateInspectCmd)
+
 	versionCmd := &cobra.Command{
 		Use:   "version",
 		Short: "Show version information",
@@ -110,7 +148,7 @@ func main() {
 		},
 	}
 
-	rootCmd.AddCommand(upCmd, downCmd, versionCmd)
+	rootCmd.AddCommand(upCmd, downCmd, stateCmd, versionCmd)
 	if err := rootCmd.Execute(); err != nil {
 		fmt.Println(err)
 		os.Exit(1)

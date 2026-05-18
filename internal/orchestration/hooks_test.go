@@ -4,6 +4,7 @@ import (
 	"context"
 	"testing"
 
+	"orch.io/pkg/events"
 	manifestcore "orch.io/pkg/manifest/core"
 	"orch.io/pkg/runners"
 	"orch.io/pkg/varresolvers"
@@ -36,6 +37,14 @@ func (f *fakeHookRunner) UsesNonAmbientCredentials() (bool, []string) { return f
 
 func (f *fakeHookRunner) Disconnect() error { return nil }
 
+type fakeHookEmitter struct {
+	events []events.Event
+}
+
+func (f *fakeHookEmitter) Emit(event events.Event) {
+	f.events = append(f.events, event)
+}
+
 func TestRunLifecycleHooksInterpolatesCommandAndEnv(t *testing.T) {
 	componentResolver := varresolvers.NewComponentResolver()
 	componentResolver.RegisterPersistedComponentOutput("database", map[string]string{
@@ -43,6 +52,7 @@ func TestRunLifecycleHooksInterpolatesCommandAndEnv(t *testing.T) {
 	})
 
 	runner := &fakeHookRunner{}
+	emitter := &fakeHookEmitter{}
 	component := &manifestcore.Component{Name: "api", Type: "docker-compose"}
 	err := runLifecycleHooks(context.Background(), runner, []manifestcore.Hook{
 		{
@@ -60,6 +70,7 @@ func TestRunLifecycleHooksInterpolatesCommandAndEnv(t *testing.T) {
 		workDir:      "/tmp/orch/test-env/api",
 		baseEnv:      map[string]string{"BASE": "present"},
 		resolver:     componentResolver,
+		emitter:      emitter,
 	})
 	if err != nil {
 		t.Fatalf("runLifecycleHooks returned error: %v", err)
@@ -84,6 +95,15 @@ func TestRunLifecycleHooksInterpolatesCommandAndEnv(t *testing.T) {
 	}
 	if hookCommand.Env["BASE"] != "present" {
 		t.Fatalf("expected base env to be preserved")
+	}
+	if len(emitter.events) != 2 {
+		t.Fatalf("expected start and success hook events, got %d", len(emitter.events))
+	}
+	if emitter.events[0].Type != events.EventStart || emitter.events[0].Stage != string(lifecyclePreApply) {
+		t.Fatalf("unexpected start event: %#v", emitter.events[0])
+	}
+	if emitter.events[1].Type != events.EventSuccess || emitter.events[1].Stage != string(lifecyclePreApply) {
+		t.Fatalf("unexpected success event: %#v", emitter.events[1])
 	}
 }
 

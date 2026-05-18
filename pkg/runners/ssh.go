@@ -140,6 +140,7 @@ func (t *SSHRunner) Exec(ctx context.Context, req ExecCommand) (*ExecResult, err
 	start := time.Now()
 	err = session.Run(cmd)
 	duration := time.Since(start)
+	ensureExecWriterLineEnds(req.Stdout, req.Stderr)
 
 	exitCode := 0
 	if err != nil {
@@ -147,11 +148,6 @@ func (t *SSHRunner) Exec(ctx context.Context, req ExecCommand) (*ExecResult, err
 		if errors.As(err, &exitErr) {
 			exitCode = exitErr.ExitStatus()
 		}
-	}
-
-	// flush stdout to next line
-	if req.Stdout != nil {
-		_, _ = req.Stdout.Write([]byte("\n"))
 	}
 
 	return &ExecResult{

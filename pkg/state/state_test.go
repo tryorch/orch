@@ -35,13 +35,16 @@ func TestBeginComponentApplyPreservesDestroyData(t *testing.T) {
 		Status: StatusApplied,
 	})
 
-	current.BeginComponentApply(component, "local", "/tmp/db")
+	current.BeginComponentApply(component, "local", "/tmp/db", StageApply)
 	got, ok := current.FindComponent("db")
 	if !ok {
 		t.Fatal("component not found")
 	}
 	if got.Status != StatusApplying {
 		t.Fatalf("status = %q, want %q", got.Status, StatusApplying)
+	}
+	if got.Stage != StageApply {
+		t.Fatalf("stage = %q, want %q", got.Stage, StageApply)
 	}
 	if got.Payload["workdir"] != "/tmp/db" {
 		t.Fatalf("payload was not preserved: %#v", got.Payload)
@@ -54,9 +57,9 @@ func TestBeginComponentApplyPreservesDestroyData(t *testing.T) {
 func TestMarkComponentStatus(t *testing.T) {
 	current := New("env", "manifest", &logging.NoopDebugLogger{})
 	component := &manifestcore.Component{Name: "app", Type: "script", Runner: "local"}
-	current.BeginComponentApply(component, "local", "/tmp/app")
+	current.BeginComponentApply(component, "local", "/tmp/app", StageApply)
 
-	current.MarkComponentFailed("app")
+	current.MarkComponentFailed("app", StagePostApply)
 	got, ok := current.FindComponent("app")
 	if !ok {
 		t.Fatal("component not found")
@@ -64,10 +67,29 @@ func TestMarkComponentStatus(t *testing.T) {
 	if got.Status != StatusFailed {
 		t.Fatalf("status = %q, want %q", got.Status, StatusFailed)
 	}
+	if got.Stage != StagePostApply {
+		t.Fatalf("stage = %q, want %q", got.Stage, StagePostApply)
+	}
 
-	current.MarkComponentDestroying("app")
+	current.MarkComponentDestroying("app", StageDestroy)
 	got, _ = current.FindComponent("app")
 	if got.Status != StatusDestroying {
 		t.Fatalf("status = %q, want %q", got.Status, StatusDestroying)
+	}
+	if got.Stage != StageDestroy {
+		t.Fatalf("stage = %q, want %q", got.Stage, StageDestroy)
+	}
+}
+
+func TestStageIsDestroyStage(t *testing.T) {
+	for _, stage := range []Stage{StagePreDestroy, StageDestroy, StagePostDestroy} {
+		if !stage.IsDestroyStage() {
+			t.Fatalf("expected %q to be destroy stage", stage)
+		}
+	}
+	for _, stage := range []Stage{StageConfig, StagePreApply, StageApply, StageOutputs, StageArtifacts, StagePostApply} {
+		if stage.IsDestroyStage() {
+			t.Fatalf("expected %q not to be destroy stage", stage)
+		}
 	}
 }
