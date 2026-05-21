@@ -54,14 +54,14 @@ func renderStateInspectJSON(writer io.Writer, currentState *state.OrchState) err
 }
 
 func renderStateInspectTable(writer io.Writer, currentState *state.OrchState) error {
-	fmt.Fprintf(writer, "Environment: %s\n", currentState.EnvID)
-	fmt.Fprintf(writer, "Manifest:    %s\n", currentState.ManifestID)
-	fmt.Fprintf(writer, "Updated:     %s\n\n", currentState.UpdatedAt)
+	_, _ = fmt.Fprintf(writer, "Environment: %s\n", currentState.EnvID)
+	_, _ = fmt.Fprintf(writer, "Manifest:    %s\n", currentState.ManifestID)
+	_, _ = fmt.Fprintf(writer, "Updated:     %s\n\n", currentState.UpdatedAt)
 
 	tw := tabwriter.NewWriter(writer, 0, 0, 2, ' ', 0)
-	fmt.Fprintln(tw, "COMPONENT\tTYPE\tRUNNER\tSTATUS\tSTAGE\tUPDATED")
+	_, _ = fmt.Fprintln(tw, "COMPONENT\tTYPE\tRUNNER\tSTATUS\tSTAGE\tUPDATED")
 	for _, component := range currentState.Components {
-		fmt.Fprintf(
+		_, _ = fmt.Fprintf(
 			tw,
 			"%s\t%s\t%s\t%s\t%s\t%s\n",
 			component.Name,
@@ -81,9 +81,9 @@ func renderStateInspectTable(writer io.Writer, currentState *state.OrchState) er
 		return nil
 	}
 
-	fmt.Fprintln(writer, "\nRecovery:")
+	_, _ = fmt.Fprintln(writer, "\nRecovery:")
 	for _, hint := range hints {
-		fmt.Fprintf(writer, "- %s\n", hint)
+		_, _ = fmt.Fprintf(writer, "- %s\n", hint)
 	}
 	return nil
 }

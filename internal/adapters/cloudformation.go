@@ -70,10 +70,6 @@ func (d *CloudFormationAdapter) ValidateAndLoadConfig(ctx context.Context, c *ma
 	}
 	cfg.TemplatePath = templatePath
 
-	if credentialRefs := detectExplicitProviderCredentialEnv(c.Env); len(credentialRefs) > 0 {
-		warnings = append(warnings, providerCredentialWarning(c, credentialRefs))
-	}
-
 	return &cfg, warnings, nil
 }
 

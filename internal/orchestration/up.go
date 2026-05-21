@@ -6,6 +6,7 @@ import (
 	"strings"
 
 	"orch.io/internal/adapters"
+	"orch.io/internal/adapters/adaptersupport"
 	"orch.io/pkg/events"
 	"orch.io/pkg/logging"
 	manifestcore "orch.io/pkg/manifest/core"
@@ -50,12 +51,7 @@ func RunUpWithOptions(envID string, m *manifestcore.Manifest, logger logging.Log
 			componentResolver,
 		},
 	}
-	commandResolvers := &varresolvers.ChainResolver{
-		Resolvers: []varresolvers.Resolver{
-			inputsResolver,
-			componentResolver,
-		},
-	}
+	commandResolvers := shellCommandResolver(inputsResolver, componentResolver)
 
 	emitter := events.NewRendererEmitter()
 	debugLogger := logger.AsDebugLogger()
@@ -208,6 +204,7 @@ func RunUpWithOptions(envID string, m *manifestcore.Manifest, logger logging.Log
 			return fmt.Errorf("component initial status registration failed: %w", err)
 		}
 
+		// Interpolate config
 		resolvedConfig, err := varresolvers.DeepInterpolate(ctx, component.Config, resolvers)
 		if err != nil {
 			currentState.MarkComponentFailed(component.Name, state.StageConfig)
@@ -216,6 +213,7 @@ func RunUpWithOptions(envID string, m *manifestcore.Manifest, logger logging.Log
 		}
 		component.Config = resolvedConfig
 
+		// Interpolate env
 		resolvedEnv, err := interpolateEnv(ctx, component.Env, resolvers)
 		if err != nil {
 			currentState.MarkComponentFailed(component.Name, state.StageConfig)
@@ -223,6 +221,10 @@ func RunUpWithOptions(envID string, m *manifestcore.Manifest, logger logging.Log
 			return fmt.Errorf("component %q env interpolation failed: %w", component.Name, err)
 		}
 		component.Env = componentExecutionEnv(envID, component, runner.Name(), resolvedEnv)
+
+		for _, warning := range adaptersupport.CredentialExposureWarnings(component) {
+			emitter.Emit(warning)
+		}
 
 		cfg, warnings, err := adapter.ValidateAndLoadConfig(ctx, component)
 		if err != nil {

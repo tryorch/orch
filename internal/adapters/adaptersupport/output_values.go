@@ -1,4 +1,4 @@
-package adapters
+package adaptersupport
 
 import (
 	"encoding/json"
@@ -6,7 +6,7 @@ import (
 	"strconv"
 )
 
-func stringifyOutputValue(value interface{}) (string, error) {
+func StringifyOutputValue(value interface{}) (string, error) {
 	switch typed := value.(type) {
 	case string:
 		return typed, nil

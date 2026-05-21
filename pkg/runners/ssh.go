@@ -220,8 +220,10 @@ func (t *SSHRunner) Exec(ctx context.Context, req ExecCommand) (*ExecResult, err
 }
 
 func buildSSHExecution(baseEnv map[string]string, req ExecCommand) (string, string) {
+	// Exit if any subsequent statement fails
 	lines := []string{"set -e"}
 
+	// Export env into shell
 	env := mergeEnv(baseEnv, req.Env)
 	if len(env) > 0 {
 		keys := make([]string, 0, len(env))
@@ -234,6 +236,7 @@ func buildSSHExecution(baseEnv map[string]string, req ExecCommand) (string, stri
 		}
 	}
 
+	// Navigate to work directory
 	if req.WorkingDir != "" {
 		lines = append(lines, "cd "+shellQuote(req.WorkingDir))
 	}
@@ -242,8 +245,10 @@ func buildSSHExecution(baseEnv map[string]string, req ExecCommand) (string, stri
 	for _, arg := range req.Command {
 		parts = append(parts, shellQuote(arg))
 	}
+	// Transfer shell to new exec process
 	lines = append(lines, "exec "+strings.Join(parts, " "))
 
+	// Read from stdin
 	return "sh -s", strings.Join(lines, "\n") + "\n"
 }
 

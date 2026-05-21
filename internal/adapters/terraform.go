@@ -14,6 +14,7 @@ import (
 	"github.com/hashicorp/hcl/v2"
 	"github.com/hashicorp/hcl/v2/hclparse"
 	"github.com/hashicorp/terraform-config-inspect/tfconfig"
+	"orch.io/internal/adapters/adaptersupport"
 	"orch.io/pkg/logging"
 
 	"orch.io/pkg/events"
@@ -111,12 +112,6 @@ func (d *TerraformAdapter) ValidateAndLoadConfig(ctx context.Context, c *manifes
 		if varDef.Default == nil && os.Getenv(varName) != "" && cfg.Vars[varName] == "" {
 			cfg.Vars[varName] = os.Getenv(varName)
 		}
-	}
-
-	credentialRefs := detectExplicitProviderCredentialEnv(c.Env)
-	credentialRefs = append(credentialRefs, detectExplicitTerraformCredentialVars(cfg.Vars)...)
-	if len(credentialRefs) > 0 {
-		warnings = append(warnings, providerCredentialWarning(c, credentialRefs))
 	}
 
 	return &cfg, warnings, nil
@@ -380,7 +375,7 @@ func parseTerraformOutputs(data []byte) (ComponentApplyOutput, error) {
 		if output.Sensitive {
 			continue
 		}
-		value, err := stringifyOutputValue(output.Value)
+		value, err := adaptersupport.StringifyOutputValue(output.Value)
 		if err != nil {
 			return nil, fmt.Errorf("failed to convert terraform output %q: %w", key, err)
 		}

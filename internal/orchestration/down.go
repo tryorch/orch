@@ -45,11 +45,8 @@ func RunDown(envID string, m *manifestcore.Manifest, logger logging.Logger) erro
 			componentResolver,
 		},
 	}
-	commandResolvers := &varresolvers.ChainResolver{
-		Resolvers: []varresolvers.Resolver{
-			componentResolver,
-		},
-	}
+
+	commandResolvers := shellCommandResolver(componentResolver)
 
 	emitter := events.NewRendererEmitter()
 	debugLogger := logger.AsDebugLogger()
