@@ -51,6 +51,11 @@ components:
         echo "message=hello from orch" >> "$ORCH_OUTPUT_ENV"
     outputs:
       - name: message
+    hooks:
+      post_apply:
+        - command: echo ${setup.outputs.message}
+      post_destroy:
+        - command: echo ${setup.outputs.message} and bye now!
 ```
 
 Run it:
