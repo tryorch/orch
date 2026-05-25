@@ -220,7 +220,7 @@ func RunUpWithOptions(envID string, m *manifestcore.Manifest, logger logging.Log
 			_ = stateManager.Save(currentState)
 			return fmt.Errorf("component %q env interpolation failed: %w", component.Name, err)
 		}
-		component.Env = componentExecutionEnv(envID, component, runner.Name(), resolvedEnv)
+		component.Env = componentExecutionEnv(envID, component, runner.Name(), runnerWorkDir, resolvedEnv)
 
 		for _, warning := range adaptersupport.CredentialExposureWarnings(component) {
 			emitter.Emit(warning)

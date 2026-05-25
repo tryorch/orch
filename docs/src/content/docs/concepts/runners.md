@@ -38,6 +38,7 @@ runners:
     type: ssh
     config:
       host: example.com
+      port: 22
       user: deploy
       host_key:
         known_hosts: ~/.ssh/known_hosts

@@ -11,6 +11,8 @@ orch --debug <command>
 
 `--debug` enables debug logging.
 
+Most examples use the long flags. Short aliases are available for common options such as `-e` for `--env-id`, `-f` for `--file`, and `-o` for `--output` on `state inspect`.
+
 ## up
 
 ```sh
@@ -27,6 +29,8 @@ Flags:
 - `--params-file`: YAML or env parameter file
 - `--reapply`: rerun components already marked applied
 
+When both `--params-file` and `--param` provide the same key, the CLI `--param` value wins.
+
 ## down
 
 ```sh
@@ -36,6 +40,8 @@ orch down --env-id <id> [--file orch.yaml] [--param key=value] [--params-file pa
 Destroys an environment from persisted state.
 
 `down` still needs the manifest today so Orch can load the state backend and runner topology.
+
+`down` accepts the same `--param` and `--params-file` inputs as `up`, so runner and component environment pointers can be resolved during teardown.
 
 ## state inspect
 

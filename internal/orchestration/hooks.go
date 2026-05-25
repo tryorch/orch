@@ -147,9 +147,8 @@ func lifecycleHookEnv(ctx context.Context, hookCtx hookExecutionContext, phase l
 		env[key] = resolved
 	}
 
-	env = componentExecutionEnv(hookCtx.envID, hookCtx.componentRef, hookCtx.runner, env)
+	env = componentExecutionEnv(hookCtx.envID, hookCtx.componentRef, hookCtx.runner, hookCtx.workDir, env)
 	env["ORCH_LIFECYCLE"] = string(phase)
-	env["ORCH_WORKDIR"] = hookCtx.workDir
 
 	return env, nil
 }

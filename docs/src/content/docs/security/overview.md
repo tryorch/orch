@@ -17,7 +17,7 @@ The current security posture is built around a few boundaries:
 
 Sensitive outputs are available during the same `orch up` process that produced them. They are not persisted in state.
 
-If a later run needs a sensitive output from a skipped component, Orch should fail clearly instead of inventing or leaking a value.
+If a later run needs a sensitive output from a skipped component, Orch fails clearly instead of inventing or leaking a value.
 
 ## State
 

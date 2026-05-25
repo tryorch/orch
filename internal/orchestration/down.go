@@ -271,6 +271,6 @@ func destroyRuntimeComponent(
 	if err != nil {
 		return nil, fmt.Errorf("component %q env interpolation failed during destroy: %w", componentState.Name, err)
 	}
-	component.Env = componentExecutionEnv(envID, component, runnerName, resolvedEnv)
+	component.Env = componentExecutionEnv(envID, component, runnerName, componentState.WorkDir, resolvedEnv)
 	return component, nil
 }

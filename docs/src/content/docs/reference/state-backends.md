@@ -16,6 +16,12 @@ state:
     path: .orch
 ```
 
+Config fields:
+
+| Field | Required | Default | Description |
+| --- | --- | --- | --- |
+| `path` | No | `.orch` | Local directory where environment state bundles are stored. |
+
 Layout:
 
 ```text
@@ -37,6 +43,16 @@ state:
     server_side_encryption: aws:kms
     kms_key_id: alias/orch
 ```
+
+Config fields:
+
+| Field | Required | Default | Description |
+| --- | --- | --- | --- |
+| `bucket` | Yes | None | S3 bucket that stores state objects. |
+| `prefix` | No | Empty | Key prefix before `<env-id>/state.json`. Leading and trailing slashes are normalized. |
+| `region` | No | AWS SDK default | Region passed to the AWS SDK config loader. |
+| `server_side_encryption` | No | Bucket default | Either `AES256` or `aws:kms`. |
+| `kms_key_id` | No | Empty | KMS key ID or alias. Requires `server_side_encryption: aws:kms`. |
 
 Layout:
 

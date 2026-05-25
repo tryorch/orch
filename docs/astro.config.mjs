@@ -46,7 +46,22 @@ export default defineConfig({
 				{
 					label: 'Reference',
 					items: [
-						{ label: 'Manifest', slug: 'reference/manifest' },
+						{
+							label: 'Manifest',
+							collapsed: false,
+							items: [
+								{ label: 'Overview', slug: 'reference/manifest' },
+								{ label: 'Metadata', slug: 'reference/manifest/metadata' },
+								{ label: 'Inputs', slug: 'reference/manifest/inputs' },
+								{ label: 'State', slug: 'reference/manifest/state' },
+								{ label: 'Runners', slug: 'reference/manifest/runners' },
+								{ label: 'Components', slug: 'reference/manifest/components' },
+								{ label: 'Source and Files', slug: 'reference/manifest/source-and-files' },
+								{ label: 'Env', slug: 'reference/manifest/env' },
+								{ label: 'Outputs', slug: 'reference/manifest/outputs' },
+								{ label: 'Hooks', slug: 'reference/manifest/hooks' },
+							],
+						},
 						{ label: 'CLI', slug: 'reference/cli' },
 						{ label: 'State Backends', slug: 'reference/state-backends' },
 					],

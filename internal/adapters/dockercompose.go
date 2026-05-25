@@ -329,7 +329,6 @@ func buildOrchManagedComposeEnv(
 	}
 
 	env["COMPOSE_PROJECT_NAME"] = composeProjectName(envID, componentName)
-	env["ORCH_COMPOSE_WORKING_DIR"] = workDir
 	env["ORCH_ENV_ID"] = envID
 	return env
 }

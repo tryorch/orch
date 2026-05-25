@@ -7,8 +7,8 @@ import (
 	"orch.io/pkg/varresolvers"
 )
 
-func componentExecutionEnv(envID string, component *manifestcore.Component, runnerName string, base map[string]string) map[string]string {
-	env := make(map[string]string, len(base)+4)
+func componentExecutionEnv(envID string, component *manifestcore.Component, runnerName string, workDir string, base map[string]string) map[string]string {
+	env := make(map[string]string, len(base)+5)
 	for key, value := range base {
 		env[key] = value
 	}
@@ -17,6 +17,7 @@ func componentExecutionEnv(envID string, component *manifestcore.Component, runn
 	env["ORCH_COMPONENT_NAME"] = component.Name
 	env["ORCH_COMPONENT_TYPE"] = component.Type
 	env["ORCH_RUNNER_NAME"] = runnerName
+	env["ORCH_WORKDIR"] = workDir
 
 	return env
 }

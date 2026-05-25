@@ -40,7 +40,18 @@ Outputs are required by default.
 
 Sensitive outputs are available during the same `orch up` process that produced them, but they are not persisted in state.
 
-If a later run skips the producer because it is already applied, sensitive outputs from that producer are unavailable. Orch should fail clearly rather than invent or leak the value.
+If a later run skips the producer because it is already applied, sensitive outputs from that producer are unavailable. Orch fails clearly rather than inventing or leaking the value.
+
+## Reserved Metadata Outputs
+
+Adapter-generated operational outputs live under the reserved `_meta` namespace.
+
+```yaml
+env:
+  BASE_URL: "http://localhost:${web.outputs._meta.ports.services.web.80}"
+```
+
+Users cannot declare outputs named `_meta` or beginning with `_meta.`. Orch keeps these values available for interpolation and state because they are adapter metadata, not user-declared outputs.
 
 ## Script Outputs
 
