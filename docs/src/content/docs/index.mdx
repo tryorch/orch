@@ -1,0 +1,128 @@
+---
+title: Orch
+description: Ephemeral environment orchestration for preview, test, and development sandboxes.
+template: splash
+---
+
+<div class="orch-landing">
+  <section class="orch-hero">
+    <div>
+      <p class="orch-eyebrow">Environment orchestration</p>
+      <h1>Bring up real environments. Tear them down cleanly.</h1>
+      <p class="orch-lead">Orch orchestrates component execution across local and remote runners, capturing state as it goes so every environment can be inspected, retried, and torn down reliably.</p>
+      <div class="orch-actions">
+        <a class="orch-button orch-button-primary" href="/getting-started/quickstart/">Get started</a>
+        <a class="orch-button orch-button-secondary" href="/concepts/environments/">Read concepts</a>
+      </div>
+    </div>
+
+    <aside class="orch-terminal" aria-label="Terminal preview">
+      <div class="orch-terminal-title">Terminal</div>
+      <pre>$ orch up --env-id pr-123{"\n"}<span>[local &gt; setup]</span> apply started{"\n"}<span>[local &gt; setup]</span> outputs captured{"\n\n"}$ orch state inspect --env-id pr-123{"\n"}component  status   stage{"\n"}setup      applied  post_apply{"\n\n"}$ orch down --env-id pr-123{"\n"}<span>[local &gt; setup]</span> destroyed{"\n"}state bundle deleted</pre>
+    </aside>
+  </section>
+
+  <section class="orch-band">
+    <div class="orch-section-head">
+      <h2>One manifest for the messy middle.</h2>
+      <p>Real environments rarely belong to one tool. Orch gives those pieces a shared lifecycle so setup scripts, containers, infrastructure modules, cloud stacks, hooks, and outputs can move together.</p>
+    </div>
+
+    <div class="orch-tool-grid">
+      <article class="orch-tool-card">
+        <div class="orch-tool-icon">sh</div>
+        <h3>Scripts</h3>
+        <p>Run setup, glue code, checks, migrations, and custom automation.</p>
+      </article>
+      <article class="orch-tool-card">
+        <div class="orch-tool-icon">DC</div>
+        <h3>Docker Compose</h3>
+        <p>Bring app services up locally or on a remote runner.</p>
+      </article>
+      <article class="orch-tool-card">
+        <div class="orch-tool-icon">TF</div>
+        <h3>Terraform</h3>
+        <p>Apply modules, capture outputs, and preserve local state artifacts.</p>
+      </article>
+      <article class="orch-tool-card">
+        <div class="orch-tool-icon">CF</div>
+        <h3>CloudFormation</h3>
+        <p>Create AWS stacks and feed stack outputs to later components.</p>
+      </article>
+    </div>
+  </section>
+
+  <section class="orch-band orch-manifest">
+    <aside class="orch-code-card" aria-label="Manifest preview">
+      <div class="orch-filebar"><span>orch.yaml</span></div>
+      <pre><span class="orch-yaml-key">components</span>:{"\n"}  <span class="orch-yaml-key">web</span>:{"\n"}    <span class="orch-yaml-key">type</span>: docker-compose{"\n"}    <span class="orch-yaml-key">runner</span>: local{"\n"}    <span class="orch-yaml-key">source</span>:{"\n"}      <span class="orch-yaml-key">files</span>:{"\n"}        <span class="orch-yaml-key">docker-compose.yml</span>: <span class="orch-yaml-string">./compose.yml</span>{"\n"}    <span class="orch-yaml-key">outputs</span>:{"\n"}      - <span class="orch-yaml-key">name</span>: url{"\n\n"}  <span class="orch-yaml-key">smoke</span>:{"\n"}    <span class="orch-yaml-key">type</span>: script{"\n"}    <span class="orch-yaml-key">depends_on</span>: [web]{"\n"}    <span class="orch-yaml-key">env</span>:{"\n"}      <span class="orch-yaml-key">BASE_URL</span>: <span class="orch-yaml-string">{"\"${web.outputs.url}\""}</span>{"\n"}    <span class="orch-yaml-key">source</span>:{"\n"}      <span class="orch-yaml-key">embedded</span>: |{"\n"}        <span class="orch-yaml-muted">curl -fsS "$BASE_URL/health"</span></pre>
+    </aside>
+
+    <div class="orch-manifest-copy">
+      <h2>Readable enough to review. Structured enough to recover.</h2>
+      <p>The manifest stays close to the way developers already describe environments: runners, components, source, outputs, hooks, and state backend configuration.</p>
+      <div class="orch-point-list">
+        <div class="orch-point">Components can depend on outputs from earlier components.</div>
+        <div class="orch-point">Adapters capture payloads and artifacts needed for teardown.</div>
+        <div class="orch-point">State backends keep runtime facts outside the manifest.</div>
+      </div>
+    </div>
+  </section>
+
+  <section class="orch-band">
+    <div class="orch-section-head">
+      <h2>Designed around lifecycle, not just launch.</h2>
+      <p>Orch tracks where each component is in the run, captures the operational facts needed to destroy it, and keeps enough context to retry after interruption.</p>
+    </div>
+
+    <div class="orch-flow">
+      <article>
+        <span>01</span>
+        <h3>Declare</h3>
+        <p>Describe components, runners, inputs, outputs, and hooks.</p>
+      </article>
+      <article>
+        <span>02</span>
+        <h3>Apply</h3>
+        <p>Run components in dependency order across your runners.</p>
+      </article>
+      <article>
+        <span>03</span>
+        <h3>Capture</h3>
+        <p>Persist non-sensitive outputs, payloads, and tool artifacts.</p>
+      </article>
+      <article>
+        <span>04</span>
+        <h3>Inspect</h3>
+        <p>See component status, stage, runner, and recovery hints.</p>
+      </article>
+      <article>
+        <span>05</span>
+        <h3>Destroy</h3>
+        <p>Restore artifacts and tear down in reverse state order.</p>
+      </article>
+    </div>
+  </section>
+
+  <section class="orch-band">
+    <h2 class="orch-doc-title">Explore the docs</h2>
+    <div class="orch-doc-grid">
+      <a href="/getting-started/quickstart/">
+        <strong>Quickstart</strong>
+        <span>Run a local script component, inspect state, and tear it down.</span>
+      </a>
+      <a href="/concepts/state-and-recovery/">
+        <strong>State and recovery</strong>
+        <span>Understand statuses, stages, artifacts, and retry behavior.</span>
+      </a>
+      <a href="/adapters/script/">
+        <strong>Adapters</strong>
+        <span>Use Script, Docker Compose, Terraform, and CloudFormation.</span>
+      </a>
+      <a href="/security/overview/">
+        <strong>Security</strong>
+        <span>Learn how Orch treats state, outputs, SSH, and credentials.</span>
+      </a>
+    </div>
+  </section>
+</div>

@@ -37,9 +37,16 @@ go.work.sum
 /orch/
 bin/
 
+# Docs site
+/docs/node_modules/
+/docs/dist/
+/docs/.astro/
+
 # Local markdown notes
 *.md
 !README.md
+!docs/**/*.md
+!docs/**/*.mdx
 !md/lifecycle-hooks.md
 !md/apply-policy.md
 !md/open-source-readiness.md
