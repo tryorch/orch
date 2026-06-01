@@ -5,10 +5,10 @@ description: Run a local script component with Orch.
 
 This quickstart runs a local script component, captures an output, inspects state, and tears the environment down.
 
-## Build Orch
+## Install Orch
 
 ```sh
-go build -o bin/orch ./cmd/orch
+curl -fsSL https://tryorch.dev/install | sh
 ```
 
 ## Create A Manifest
@@ -16,7 +16,7 @@ go build -o bin/orch ./cmd/orch
 Generate a starter manifest:
 
 ```sh
-bin/orch init --id hello
+orch init --id hello
 ```
 
 Or create `orch.yaml` manually:
@@ -51,7 +51,7 @@ components:
 ## Apply
 
 ```sh
-bin/orch up --env-id demo
+orch up --env-id demo
 ```
 
 Orch applies the component and writes state under `.orch/demo` by default.
@@ -59,7 +59,7 @@ Orch applies the component and writes state under `.orch/demo` by default.
 ## Inspect
 
 ```sh
-bin/orch state inspect --env-id demo
+orch state inspect --env-id demo
 ```
 
 The default table output shows component status, stage, type, runner, and timestamps. It intentionally does not print outputs, payloads, or artifact contents.
@@ -67,7 +67,7 @@ The default table output shows component status, stage, type, runner, and timest
 ## Destroy
 
 ```sh
-bin/orch down --env-id demo
+orch down --env-id demo
 ```
 
 After a successful destroy, Orch deletes the whole environment state bundle, including artifacts.
