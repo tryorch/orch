@@ -19,7 +19,13 @@ Current areas of focus:
 
 ## Quickstart
 
-Build the CLI:
+Install the CLI:
+
+```sh
+curl -fsSL https://tryorch.dev/install | sh
+```
+
+Or build from source:
 
 ```sh
 go build -o bin/orch ./cmd/orch
