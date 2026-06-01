@@ -3,6 +3,7 @@
   "type": "module",
   "version": "0.0.1",
   "scripts": {
+    "prebuild": "cp ../scripts/install.sh public/install",
     "dev": "astro dev",
     "start": "astro dev",
     "build": "astro build",
