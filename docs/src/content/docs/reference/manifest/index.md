@@ -6,7 +6,7 @@ description: The core Orch manifest structure.
 The manifest describes an environment: inputs, state backend, runners, and the components Orch applies and destroys.
 
 ```yaml
-version: orch.io/1.0
+version: orch/1.0
 
 metadata:
   id: my-env
@@ -47,7 +47,7 @@ The manifest format is still alpha. Field names and adapter behavior may change 
 
 | Field | Required | Description |
 | --- | --- | --- |
-| `version` | Yes | Manifest version. Current examples use `orch.io/1.0`. |
+| `version` | Yes | Manifest version. Current examples use `orch/1.0`. |
 | `metadata` | No | Environment metadata. Useful for humans and future remote state backends. |
 | `state` | No | State backend selection. Defaults to the local backend when omitted. |
 | `inputs` | No | Named values that can be supplied by flags, params files, or defaults. |

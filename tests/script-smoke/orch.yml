@@ -1,4 +1,4 @@
-version: orch.io/1.0
+version: orch/1.0
 
 metadata:
   id: script-smoke

@@ -6,7 +6,7 @@ description: Run a local script component and capture outputs.
 Use the script adapter when you need custom setup, checks, glue code, or simple automation.
 
 ```yaml
-version: orch.io/1.0
+version: orch/1.0
 
 metadata:
   id: script-example

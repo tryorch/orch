@@ -28,7 +28,7 @@ go build -o bin/orch ./cmd/orch
 Create `orch.yaml`:
 
 ```yaml
-version: orch.io/1.0
+version: orch/1.0
 
 metadata:
   id: hello

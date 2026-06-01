@@ -23,7 +23,7 @@ Or create `orch.yaml` manually:
 
 
 ```yaml
-version: orch.io/1.0
+version: orch/1.0
 
 metadata:
   id: hello

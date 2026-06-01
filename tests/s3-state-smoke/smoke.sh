@@ -50,7 +50,7 @@ if ! aws sts get-caller-identity --region "$REGION" >/dev/null; then
 fi
 
 cat > "$ORCH_FILE" <<YAML
-version: orch.io/1.0
+version: orch/1.0
 
 metadata:
   id: s3-state-smoke

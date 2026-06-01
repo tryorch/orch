@@ -21,7 +21,7 @@ func TestRunInitWritesStarterManifest(t *testing.T) {
 	}
 	content := string(data)
 	for _, expected := range []string{
-		"version: orch.io/1.0",
+		"version: orch/1.0",
 		"id: demo",
 		"type: local",
 		"type: script",
