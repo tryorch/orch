@@ -1,0 +1,139 @@
+name: CLI
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+    tags:
+      - "v*"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+env:
+  GO_VERSION_FILE: go.mod
+
+jobs:
+  test-and-build:
+    name: Test and build
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: ${{ env.GO_VERSION_FILE }}
+          cache: true
+
+      - name: Test
+        run: go test ./...
+
+      - name: Build
+        run: |
+          set -euo pipefail
+          mkdir -p dist
+          VERSION="dev"
+          if [ "$GITHUB_REF_TYPE" = "tag" ]; then
+            VERSION="$GITHUB_REF_NAME"
+          fi
+          BUILD_DATE="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          go build \
+            -trimpath \
+            -ldflags "-s -w -X orch.io/pkg/version.Version=$VERSION -X orch.io/pkg/version.Commit=$GITHUB_SHA -X orch.io/pkg/version.BuildDate=$BUILD_DATE" \
+            -o dist/orch \
+            ./cmd/orch
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: orch-linux-amd64
+          path: dist/orch
+          if-no-files-found: error
+
+  release-assets:
+    name: Build release assets
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: test-and-build
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - goos: darwin
+            goarch: amd64
+            suffix: Darwin_x86_64
+          - goos: darwin
+            goarch: arm64
+            suffix: Darwin_arm64
+          - goos: linux
+            goarch: amd64
+            suffix: Linux_x86_64
+          - goos: linux
+            goarch: arm64
+            suffix: Linux_arm64
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version-file: ${{ env.GO_VERSION_FILE }}
+          cache: true
+
+      - name: Build asset
+        env:
+          GOOS: ${{ matrix.goos }}
+          GOARCH: ${{ matrix.goarch }}
+        run: |
+          set -euo pipefail
+          mkdir -p "dist/orch_${GITHUB_REF_NAME}_${{ matrix.suffix }}"
+          BUILD_DATE="$(date -u +'%Y-%m-%dT%H:%M:%SZ')"
+          go build \
+            -trimpath \
+            -ldflags "-s -w -X orch.io/pkg/version.Version=$GITHUB_REF_NAME -X orch.io/pkg/version.Commit=$GITHUB_SHA -X orch.io/pkg/version.BuildDate=$BUILD_DATE" \
+            -o "dist/orch_${GITHUB_REF_NAME}_${{ matrix.suffix }}/orch" \
+            ./cmd/orch
+          cp README.md LICENSE "dist/orch_${GITHUB_REF_NAME}_${{ matrix.suffix }}/"
+          tar -C dist -czf "dist/orch_${GITHUB_REF_NAME}_${{ matrix.suffix }}.tar.gz" "orch_${GITHUB_REF_NAME}_${{ matrix.suffix }}"
+
+      - name: Upload release asset
+        uses: actions/upload-artifact@v4
+        with:
+          name: orch-${{ matrix.suffix }}
+          path: dist/*.tar.gz
+          if-no-files-found: error
+
+  release:
+    name: Publish release
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs:
+      - release-assets
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+
+    steps:
+      - name: Download release assets
+        uses: actions/download-artifact@v4
+        with:
+          path: dist
+          pattern: orch-*
+          merge-multiple: true
+
+      - name: Generate checksums
+        working-directory: dist
+        run: shasum -a 256 *.tar.gz > checksums.txt
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          files: |
+            dist/*.tar.gz
+            dist/checksums.txt
