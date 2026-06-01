@@ -1,12 +1,18 @@
-package main
+package scaffold
 
 import (
+	"bytes"
+	"embed"
 	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
+	"text/template"
 	"unicode"
 )
+
+//go:embed templates/starter.orch.yaml
+var templatesFS embed.FS
 
 type InitOptions struct {
 	Path  string
@@ -36,7 +42,11 @@ func RunInit(options InitOptions) error {
 		return fmt.Errorf("failed to create manifest directory: %w", err)
 	}
 
-	if err := os.WriteFile(options.Path, []byte(starterManifest(options.ID)), 0644); err != nil {
+	manifest, err := starterManifest(options.ID)
+	if err != nil {
+		return err
+	}
+	if err := os.WriteFile(options.Path, manifest, 0644); err != nil {
 		return fmt.Errorf("failed to write %s: %w", options.Path, err)
 	}
 	return nil
@@ -79,39 +89,20 @@ func sanitizeManifestID(value string) string {
 	return result
 }
 
-func starterManifest(id string) string {
-	return fmt.Sprintf(`version: orch.io/1.0
+func starterManifest(id string) ([]byte, error) {
+	data, err := templatesFS.ReadFile("templates/starter.orch.yaml")
+	if err != nil {
+		return nil, fmt.Errorf("failed to read starter manifest template: %w", err)
+	}
 
-metadata:
-  id: %s
-  description: Starter Orch environment
-  owner:
-    name: Your Name
-    email: you@example.com
+	tmpl, err := template.New("starter.orch.yaml").Parse(string(data))
+	if err != nil {
+		return nil, fmt.Errorf("failed to parse starter manifest template: %w", err)
+	}
 
-state:
-  backend: local
-  config:
-    path: .orch
-
-runners:
-  local:
-    type: local
-    config: {}
-
-components:
-  setup:
-    type: script
-    runner: local
-    source:
-      embedded: |
-        echo "message=hello from orch" >> "$ORCH_OUTPUT_ENV"
-    outputs:
-      - name: message
-    hooks:
-      post_apply:
-        - command: echo ${setup.outputs.message}
-      post_destroy:
-        - command: echo ${setup.outputs.message} and bye now!
-`, id)
+	var out bytes.Buffer
+	if err := tmpl.Execute(&out, map[string]string{"ID": id}); err != nil {
+		return nil, fmt.Errorf("failed to render starter manifest template: %w", err)
+	}
+	return out.Bytes(), nil
 }

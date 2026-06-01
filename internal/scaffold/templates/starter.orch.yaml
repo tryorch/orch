@@ -1,0 +1,33 @@
+version: orch.io/1.0
+
+metadata:
+  id: {{ .ID }}
+  description: Starter Orch environment
+  owner:
+    name: Your Name
+    email: you@example.com
+
+state:
+  backend: local
+  config:
+    path: .orch
+
+runners:
+  local:
+    type: local
+    config: {}
+
+components:
+  setup:
+    type: script
+    runner: local
+    source:
+      embedded: |
+        echo "message=hello from orch" >> "$ORCH_OUTPUT_ENV"
+    outputs:
+      - name: message
+    hooks:
+      post_apply:
+        - command: echo ${setup.outputs.message}
+      post_destroy:
+        - command: echo ${setup.outputs.message} and bye now!

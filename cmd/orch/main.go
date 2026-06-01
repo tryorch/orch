@@ -5,6 +5,7 @@ import (
 	"os"
 
 	"orch.io/internal/orchestration"
+	"orch.io/internal/scaffold"
 	"orch.io/pkg/logging"
 	"orch.io/pkg/manifest"
 	"orch.io/pkg/utils"
@@ -57,7 +58,7 @@ func main() {
 		Use:   "init",
 		Short: "Create a starter Orch manifest",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := RunInit(InitOptions{
+			if err := scaffold.RunInit(scaffold.InitOptions{
 				Path:  manifestPath,
 				ID:    initID,
 				Force: initForce,
