@@ -1,3 +1,0 @@
-#!/bin/sh
-# Backward-compatible typo alias for early install examples.
-curl -fsSL https://tryorch.dev/install | sh
